@@ -1,0 +1,38 @@
+<Project>
+
+  <Import Project="$(MSBuildThisFileDirectory)Version.props" />
+  <!-- Where Sirrow comes from: a checkout beside this one, or SirrowSource -->
+  <Import Project="$(MSBuildThisFileDirectory)build\Sirrow.Source.props" />
+
+  <!-- Warnings are errors across the repository's projects: the synth, the generator, the sample and the tests build
+       warning-clean, and CI holds them to it. -->
+  <PropertyGroup Label="Warnings as errors">
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <PropertyGroup Label="NuGet package metadata (every packable project here)">
+    <Version>$(LunelleVersion)</Version>
+    <Authors>AtomicBlom</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/AtomicBlom/Lunelle</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/AtomicBlom/Lunelle</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <IncludeSymbols>true</IncludeSymbols>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <!-- SourceLink: embeds the GitHub commit URL in symbols so debuggers can fetch source on demand. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
+  </ItemGroup>
+
+  <!-- Each project's own README.md in its package. PackageReadmeFile alone does not include the file: the SDK wants an
+       explicit Pack=true item, or packing fails NU5039 ("readme file does not exist"). -->
+  <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)/README.md')">
+    <None Include="$(MSBuildProjectDirectory)/README.md" Pack="true" PackagePath="README.md" />
+  </ItemGroup>
+
+</Project>

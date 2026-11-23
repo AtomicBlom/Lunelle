@@ -1,0 +1,27 @@
+<Project>
+
+  <!-- Central Package Management: versions live here as <PackageVersion>; the projects carry version-less
+       <PackageReference> items. -->
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup Label="Sirrow, when SirrowSource is none (build/Sirrow.Source.props): the release Lunelle's package depends on">
+    <PackageVersion Include="BinaryVibrance.Sirrow" Version="0.1.0-preview.1" />
+  </ItemGroup>
+
+  <ItemGroup Label="The music generator (a Roslyn source generator), and the tests that compile what it writes">
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Tests (TUnit on Microsoft.Testing.Platform + Shouldly assertions)">
+    <PackageVersion Include="TUnit" Version="1.74.0" />
+    <PackageVersion Include="Shouldly" Version="4.3.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="NuGet packaging + SourceLink">
+    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.401" />
+  </ItemGroup>
+
+</Project>

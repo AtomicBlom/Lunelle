@@ -1,312 +1,17 @@
-# Synthesis
+# Lunelle
 
-What [`BinaryVibrance.Sirrow.Synth`](../BinaryVibrance.Sirrow.Synth) adds over [the mixer](audio.md): the DSP building blocks a source is
-made of, effects for buses, a 16-operator synthesizer chip with patches, samples and drum kits, music written as code
-and its sequencer, and sound rendered offline, to measure it in a test or save it as a WAV file to listen to. Beside
-it, `BinaryVibrance.SirrowStudio` is a window to write the music in (section 10).
+What [`BinaryVibrance.Lunelle`](../BinaryVibrance.Lunelle) adds over Sirrow: a 16-operator synthesizer chip with
+patches, samples and drum kits, music written as code or as files and its sequencer, and measures for designing a
+patch like a recording. It plays through [Sirrow](https://github.com/AtomicBlom/Sirrow)'s mixer, and is built from
+Sirrow's effects and DSP building blocks, and rendered offline by its `OfflineSession` ([Sirrow's guide](https://github.com/AtomicBlom/Sirrow/blob/master/docs/effects.md)).
+Beside it, `BinaryVibrance.LunelleStudio` is a window to write the music in (section 5).
 
-The library depends only on `BinaryVibrance.Sirrow` and the BCL. The Kaldra SDK doesn't reference it for an app: an app or test
-project that wants it references it itself.
+The library depends only on `BinaryVibrance.Sirrow` and the BCL. An app or test project that wants it references it
+itself.
 
 ---
 
-## 1. Rendering offline: `OfflineSession`
-
-An `OfflineSession` is an `AudioEngine` over an `OfflineAudioDevice` that keeps what it renders. Nothing renders
-until it is asked, and then as fast as the CPU goes, on the calling thread.
-
-```csharp
-using var session = new OfflineSession(sampleRate: 48_000);
-var music = session.Engine.CreateBus("music");
-session.Engine.Play(new MySynth(), music);
-
-session.RenderSeconds(2.0);
-float[] left = session.Left();
-session.SaveWav("out/synth.wav");
-```
-
-- It renders in blocks of at most 256 frames and calls `Engine.Update()` after each, as a host calls it once a frame.
-  So a source that finishes is freed in the block it finished in, and an exception a source throws comes out of
-  `Render` at the block it was thrown in.
-- `Samples` is everything rendered since the session began or since `Clear()`, interleaved stereo. `Clear()` forgets
-  it, and the engine plays on from where it was.
-- Every call comes from the thread that made the session, as with any `AudioEngine`.
-- Two sessions set up the same way render the same bits, so a test may compare renders exactly.
-
-## 2. WAV files: `WavWriter`
-
-`WavWriter.Write` writes samples as a WAV file of 32-bit float PCM, to a stream or a path (making the path's folder
-if it is missing). Every editor opens it, and so does `AudioEngine.LoadWav`.
-
-```csharp
-WavWriter.Write("out/tone.wav", samples, channels: 1, sampleRate: 48_000);
-```
-
-- Mono or stereo; stereo samples are interleaved.
-- Floats aren't clipped or dithered: what was rendered is what is written, beyond -1..1 included.
-
-## 3. Measuring: `AudioAnalysis`
-
-Measures of a rendered signal, for tests and reports:
-
-| Call | What it measures |
-|---|---|
-| `Peak(samples)` | The largest magnitude |
-| `Rms(samples)` | The root of the mean square |
-| `ToDb(amplitude)`, `FromDb(db)` | Amplitude to decibels (20·log10) and back |
-| `LevelAt(mono, hz, rate)` | The amplitude of the sinusoid at one frequency, through a Hann window over the whole span |
-| `Spectrum(mono)` | The amplitude of each bin, 0 to N/2, over the first N samples (the largest power of two that fits) |
-| `PeakFrequency(mono, rate, minHz, maxHz)` | The strongest frequency in a range, refined between bins |
-
-A sine of amplitude A reads A from `LevelAt` at its frequency, and from `Spectrum` when it sits on a bin's centre.
-
-```csharp
-var left = session.Left();
-AudioAnalysis.PeakFrequency(left, session.SampleRate, 100, 2000).ShouldBe(440, 0.5);
-AudioAnalysis.ToDb(AudioAnalysis.Rms(left)).ShouldBeLessThan(-3f);
-```
-
-The rules:
-
-- They allocate (the spectrum's arrays) and run in `double`: they are for tests and tools, never the audio thread.
-- A frequency between two bins of `Spectrum` reads lower than its amplitude, by up to 1.4 dB with the Hann window.
-  `LevelAt` reads any frequency exactly, so measure a known frequency with it.
-
-### Taking a sound apart: `BinaryVibrance.Sirrow.Synth.Analysis`
-
-For designing a patch like a recording, or judging a change to a mix without ears. Each takes one channel (or
-interleaved stereo for a mix) and its rate, and, like `AudioAnalysis`, allocates.
-
-| Call | What it measures |
-|---|---|
-| `HitMeasures.Onsets` | Where each hit starts: a jump of 9 dB in the loudest of the last 20 ms |
-| `HitMeasures.Pitch` | The pitch under a frequency at given times, from its half-cycles: a kick's fall |
-| `HitMeasures.Tones` | The tones standing out of the body (`Tone`: hertz, level) |
-| `HitMeasures.Brightness` | The spectrum's centre over a window from a time: how the top fades |
-| `HitMeasures.Flatness`, `BandEnvelope` | Each band's noisiness (1 noise, near 0 a tone) and its level over time |
-| `HitMeasures.Tail` | How long until it stays under a share of its peak |
-| `NoteMeasures.Partials` | A note's partials (`Partial`), its fundamental, and whether they are harmonics |
-| `NoteMeasures.Ring` | How one partial rings (`PartialRing`): its peak and when, its fall early and late, how it beats |
-| `NoteMeasures.Strike` | How much brighter the first 15 ms are than 60 ms in |
-| `MixMeasures.Balance`, `Spread` | A mix's energy by band, its centre, its crest, how wide it is; a stretch in brief |
-
-## 4. Building blocks: `BinaryVibrance.Sirrow.Synth.Dsp`
-
-What an `AudioSource` is made of. The structs hold their own state and are meant to be **fields of a source**: set
-them up in `OnStart` (on the game thread), step them in `Render`. None allocates after it is made, so they are safe
-on the audio thread. Per-sample methods are inlined.
-
-| Type | What it is |
-|---|---|
-| `Units` | Notes and hertz, cents and ratios, decibels and gains |
-| `SineTable` | A sine read from a 4096-step table, within 1e-5 of the true one; phase in cycles, any value |
-| `PolyBlep` | Band-limited sawtooth and pulse waves: `Saw(phase, dt)`, `Square(phase, dt, width)` |
-| `Noise` | White noise from a seed (xorshift), the same on every platform |
-| `PinkFilter` | Turns white noise pink, the same energy in every octave |
-| `OnePole` | A 6 dB-an-octave low or high pass, cheap enough to set every block |
-| `Svf` | A 12 dB-an-octave state-variable filter (low, band, high), stable while its cutoff moves; the band pass is unity at its centre |
-| `Biquad` | Cookbook filters for equalisation: low and high pass, peak, shelves. Set rarely |
-| `DelayLine` | A delay read at whole or fractional (Hermite) delays; read, then write, each sample. A class: make it in `OnStart` |
-| `EnvelopeShape`, `Envelope` | Attack, decay, sustain, release: a straight attack, exponential falls of 60 dB over their times. `Struck(seconds)`, `Gate`. `Next()` a sample, or `Fill(span)` a block at a time |
-| `Lfo` | A slow sine to move something else |
-| `Resonator` | One ringing mode: an impulse rings at about unit amplitude and dies by 60 dB over its decay |
-| `Oversampler` | 2× or 4× up and back down by half-band filters, so a waveshaper between doesn't alias. Delays by a whole `LatencyFrames` (31 or 47), so a dry copy delayed as much lines up. Each step skips the filter's zero taps and the raised signal's zero samples, a quarter of the full filter's work. A class |
-| `Denormal` | Flushes a filter's memory to zero before it reaches the slow denormal range |
-
-Call each filter's `Flush()` once a block: a filter fed silence decays toward the denormal range, where a float is
-many times slower to work with.
-
-```csharp
-sealed class Buzz : AudioSource
-{
-	private Svf _filter;
-	private float _phase;
-	private int _rate;
-
-	public SmoothedParameter Cutoff { get; } = new(800f, seconds: 0.02f);
-
-	protected override void OnStart(int sampleRate)
-	{
-		_rate = sampleRate;
-		Cutoff.Prepare(sampleRate);
-	}
-
-	protected override bool Render(Span<float> left, Span<float> right, in AudioRenderInfo info)
-	{
-		Cutoff.Begin();
-		_filter.Set(Cutoff.Skip(info.Frames), 2f, _rate);
-		var dt = 110f / _rate;
-		for (var n = 0; n < info.Frames; n++)
-		{
-			var x = _filter.LowPass(PolyBlep.Saw(_phase, dt)) * 0.3f;
-			_phase += dt;
-			_phase -= MathF.Floor(_phase);
-			left[n] = right[n] = x;
-		}
-		_filter.Flush();
-		return true;
-	}
-}
-```
-
-## 5. Effects: `BinaryVibrance.Sirrow.Synth.Effects`
-
-`AudioEffect`s to put on a bus with `AudioEngine.AddEffect` ([Effects and sends](audio.md#effects-and-sends)), or to
-run on a synthesizer's own groups. Each is a sealed class with its controls as public `AudioParameter` and
-`SmoothedParameter` properties: set their `Value` from the game at any time. A control marked *eased* glides to a new
-value; the rest are read once a block. Each allocates only when it is made and prepared.
-
-A chip's groups and a song take effects as factories, since each chip makes its own instances: `Fx.Reverb(decaySeconds,
-wet, dry)`, `Fx.Delay(seconds, feedback, pingPong, wet, dry)`, `Fx.Chorus(mix)`, `Fx.Compressor(…)`, `Fx.Duck(…)`,
-`Fx.Eq(lowDb, highDb)` and `Fx.Distortion(driveDb, toneHz, curve, cabinet, outputDb, oversampling)`, each with the
-defaults of the tables below.
-
-A reverb shared by several buses, through sends:
-
-```csharp
-var sfx = Audio.CreateBus("sfx");
-var music = Audio.CreateBus("music");
-var space = Audio.CreateBus("space");     // the room both send to: buses may be made in any order
-var reverb = new Reverb(size: 1.2f);
-Audio.AddEffect(space, reverb);
-var sfxToSpace = Audio.AddSend(sfx, space, 0.1f);
-Audio.AddSend(music, space, 0.05f);
-Audio.AddEffect(Audio.Master, new Limiter());
-
-// In a cave: more of the effects off the walls, and a longer tail
-Audio.SetSendLevel(sfxToSpace, 0.4f, fadeSeconds: 0.2f);
-reverb.DecaySeconds.Value = 2.5f;
-```
-
-### `Reverb`
-
-A room: eight delay lines feeding back through a mixing matrix, behind four all-passes that smear the input, each line
-losing highs as it goes round. Mono in, stereo out. `new Reverb(size)` scales the room's lines, 0.5 to 2. Its
-defaults (all wet, no dry) suit a bus fed only by sends.
-
-**Four of the lines sway.** Their lengths move by up to ten samples either way, each at its own rate under once a
-second: about two cents, too little and too slow to hear as a wobble. A network held still rings a held note's tail on
-at one or two frequencies of its own near the note; swaying, the tail spreads over the frequencies round it. Measured
-on a second of one note into a six-second room, the strongest line in the tail stood 20 to 30 times over the average
-near it held still, and 6 to 15 times at full sway (at 440 Hz, 1 kHz and 2.5 kHz; the measure wanders from note to
-note). `Modulation` at 0 holds it still, which also makes the tail the same every time.
-
-**The mix is a Hadamard's:** each time round, every line is fed from all eight in equal measure. That is what lets
-four swaying lines move the whole tail. Fed mostly from itself (a Householder mix), a still line keeps its own
-frequencies whatever the others do, and the same sway did little. The mix alone changed nothing measured: how even a
-click's tail is from the start, how much it repeats itself a line's length later, and its level under steady noise
-were the same either way, since the all-passes on the way in have already spread a click out before the lines come
-round.
-
-| Control | Default | Meaning |
-|---|---|---|
-| `DecaySeconds` | 1.8, eased over 0.1 s | How long the tail takes to fall 60 dB, 0.1 to 20 |
-| `DampingHz` | 6000 | Where the tail loses its highs: lower is a softer room |
-| `PreDelaySeconds` | 0.015 | The gap before the room answers, 0 to 0.25 |
-| `Modulation` | 1 | How far four of the lines sway in length, 0 (still) to 1 |
-| `Wet` | 1, eased | The reverb's share |
-| `Dry` | 0, eased | The input's share |
-
-### `Delay`
-
-Echoes, each quieter and darker. `new Delay(pingPong, maxSeconds)`: ping-pong bounces the repeats between the
-sides. `Delay.Beats(beats, bpm)` gives a time in step with music. A change of time glides, bending the echoes' pitch.
-
-| Control | Default | Meaning |
-|---|---|---|
-| `TimeSeconds` | 0.375, eased over 0.2 s | The time to the first repeat, up to `maxSeconds` |
-| `Feedback` | 0.35 | How much of each repeat comes round again, 0 to 0.95 |
-| `DampingHz` | 4000 | A one-pole low-pass on the feedback: a click comes back smeared, a tone at its level |
-| `Wet` | 0.5, eased | The repeats' share |
-| `Dry` | 1, eased | The input's share |
-
-### `Chorus`
-
-Two copies a side, each delayed by about 12 ms swaying out of step with the others, so the sound thickens and widens.
-
-| Control | Default | Meaning |
-|---|---|---|
-| `RateHz` | 0.6 | How fast the copies sway |
-| `DepthSeconds` | 0.003 | How far each copy's delay sways either side of 12 ms, up to 0.01 |
-| `Mix` | 0.5, eased | 0 is the input alone; 1 is the copies with half the input |
-
-### `Compressor`
-
-Brings a level over the threshold down by the ratio, both sides together by the louder. The amount the curve asks for
-is held through the troughs between a wave's peaks by the release, then eased toward by the attack (a decoupled peak
-detector), so a steady tone over the threshold settles where the ratio puts it. `GainReductionDb` reads how far down it
-is, once a block, from any thread.
-
-| Control | Default | Meaning |
-|---|---|---|
-| `ThresholdDb` | −18 | The level it starts at, in decibels of full scale |
-| `Ratio` | 4 | Decibels in over the threshold for each one out |
-| `KneeDb` | 6 | The width of the soft bend round the threshold; 0 is sharp |
-| `AttackSeconds` | 0.01 | How fast it comes down (a time constant) |
-| `ReleaseSeconds` | 0.15 | How fast it lets go |
-| `MakeupDb` | 0 | Gain after it |
-
-`Fx.Compressor(thresholdDb, ratio, attackSeconds, releaseSeconds, makeupDb, kneeDb)` makes one for a group's list. On a
-group of drums, an attack of a few milliseconds lets each hit's front through before it comes down, which is punch, and
-a release shorter than the gap between hits lets go before the next.
-
-**Keyed** (`new Compressor(keyed: true)`), it listens to the chip's key instead of to what it turns down: a sidechain.
-Patches send to the key with `p.Send(ChipSend.Key, level)` (§8), which nobody hears; the chip hands the key to every
-keyed effect (`IKeyedEffect`) on its groups, sends and master before each block, even while the effect rests, so its
-envelope never goes stale. `Fx.Duck(thresholdDb, ratio, attackSeconds, releaseSeconds)` makes one that ducks: on the
-bass's group, with the kick sending to the key, the bass drops under each kick and comes back over the release, which is
-drum and bass's pump. The key is taken after its voices' gain and pan, so the threshold is set against the key as loud
-as it plays. A keyed compressor anywhere no chip hands it a key (on an engine's bus) throws from `Process` rather than
-quietly doing nothing.
-
-```csharp
-var bass = song.Group("bass", Fx.Duck(thresholdDb: -30f, ratio: 8f, releaseSeconds: 0.1f));
-var drums = song.Group("drums", Fx.Compressor(thresholdDb: -24f, ratio: 4f, attackSeconds: 0.008f, releaseSeconds: 0.07f, makeupDb: 10f));
-song.Track("kit", kit, drums);            // its kick's patch does p.Send(ChipSend.Key, 1f)
-song.Track("sub", subPatch, bass);
-```
-
-### `Limiter`
-
-Keeps the output under a ceiling, for the end of a mix: it looks `LatencyFrames` (64) ahead, delaying the sound by as
-much, so its gain is down before a peak arrives, and clamps whatever still gets past.
-
-| Control | Default | Meaning |
-|---|---|---|
-| `CeilingDb` | −1 | The most the output reaches |
-| `ReleaseSeconds` | 0.1 | How fast the gain comes back after a peak |
-
-### `Eq`
-
-A low shelf, two peaks and a high shelf, all flat until set. A band's filters are worked out again only in a block
-where one of its values changed.
-
-| Control | Default | Meaning |
-|---|---|---|
-| `LowHz`, `LowDb` | 120, 0 | The low shelf |
-| `Peak1Hz`, `Peak1Q`, `Peak1Db` | 500, 1, 0 | The first peak: its centre, sharpness and gain |
-| `Peak2Hz`, `Peak2Q`, `Peak2Db` | 3000, 1, 0 | The second peak |
-| `HighHz`, `HighDb` | 8000, 0 | The high shelf |
-
-### `Distortion`
-
-Drives the sound into a curve, oversampled so its new harmonics don't alias; then a tone control and a speaker
-cabinet's response. `new Distortion(curve, cabinet, oversampling)`: `DistortionCurve` is `Soft` (tanh), `Hard` (a
-cubic into a hard clip), `Asymmetric` (tanh off centre, even harmonics) or `Fold` (folds back past ±1); `Cabinet` is
-`None`, `OneByTwelve` or `FourByTwelve`; oversampling is 1, 2 or 4. The dry sound is delayed by the oversampler's own
-`DryDelayFrames` so a mix lines up exactly. **Cost:** a stereo distortion at 4× with a cabinet is the dearest
-effect, about 1% of a core; like every effect it rests while silence goes in and comes out (`docs/audio.md`, "Effects
-and sends"), so on a song's group it costs that only while its tracks play. Nearly all of that is the 4× oversampler's
-filters: at 1× (`oversampling: 1`, or `Fx.Distortion(…, oversampling: 1)`) it costs a fifth as much, and aliases.
-
-| Control | Default | Meaning |
-|---|---|---|
-| `DriveDb` | 12, eased | How hard the sound is pushed into the curve |
-| `ToneHz` | 4000 | A low-pass after the curve |
-| `OutputDb` | −6, eased | The distorted sound's level |
-| `Mix` | 1, eased | The distorted sound's share |
-
-## 6. Patches: `BinaryVibrance.Sirrow.Synth.Chip`
+## 1. Patches: `BinaryVibrance.Lunelle.Chip`
 
 A `Patch` is an instrument as data: up to 16 operators, which of them are heard, and what the voice does after them.
 It is immutable. Write one with `Patch.Build`, whose action adds operators to a `PatchBuilder` and routes them:
@@ -403,7 +108,7 @@ left off, `Env.Decay` and `Env.Gate` are recognised, and a macro is named by the
 swaps an instrument's patch while it plays: notes sounding finish on the old one, and its macros, gain and mute carry
 over. `AudioTap`, added to a bus with `AudioEngine.AddEffect`, keeps the latest frames through it for a tool to draw.
 
-## 7. Samples and kits
+## 2. Samples and kits
 
 `SampleData` is a mono recording at its own rate (`SampleData.From(AudioDecoder.Decode(bytes))`). A `SampleZone` says
 which notes and velocities it plays for and its root; a `SampleSet` picks among zones by note and velocity, and among
@@ -441,7 +146,7 @@ manifest's folder, so a kit loads from disk, embedded resources or a package ali
 
 A missing file, a layer with no takes, or layers out of rising `upTo` order throw `InvalidDataException` naming the
 manifest and the piece.
-## 8. The chip: `SynthChip`
+## 3. The chip: `SynthChip`
 
 A `SynthChip` is an `AudioSource` that plays instruments on a pool of voices:
 
@@ -465,7 +170,7 @@ chip.SetMacro(guitar, new Macro(1), 0.6f);
 
 - **Groups** each run a chain of effects over their instruments, then into the chip's master. **The sends** are
   shared by every patch: `ChipSend.Space` (a reverb by default), `ChipSend.Echo` (a delay, all wet), and
-  `ChipSend.Key`, which is never heard: it is what keyed effects listen to (§5, `Compressor`). The master's own
+  `ChipSend.Key`, which is never heard: it is what keyed effects listen to (Sirrow's [`Compressor`](https://github.com/AtomicBlom/Sirrow/blob/master/docs/effects.md#compressor)). The master's own
   effects run last. Effects are factories, since each chip makes its own instances.
 - **Stealing.** Past its voices a note takes the voice released longest, or else the oldest, fading it out over 128
   samples first. `Stats.StolenVoices` counts them. A note let go (`NoteOff`, `AllNotesOff`) while it waits for its
@@ -492,7 +197,7 @@ chip.SetMacro(guitar, new Macro(1), 0.6f);
 Feedback and the filter are each about a fifth of a voice's cost: both are recursions, each sample waiting on the one
 before.
 
-## 9. Music: `BinaryVibrance.Sirrow.Synth.Music`
+## 4. Music: `BinaryVibrance.Lunelle.Music`
 
 Music written as code, played on a chip by a sequencer on the audio clock. A song is a method that builds new data each
 time it is called, so `dotnet watch` can rebuild it and `MusicPlayer.Swap` play the new one without a break:
@@ -655,23 +360,23 @@ off the audio thread's deadline: the thread's load fell from 2.4% to 1.0% of it,
 
 ---
 
-## 10. The workbench: `BinaryVibrance.SirrowStudio`
+## 5. The workbench: `BinaryVibrance.LunelleStudio`
 
-A window for writing music, kept apart from `BinaryVibrance.Sirrow.Synth` because it is UI (Vysara) and the synth is not. A song
-stays in the game's own project, as files the workbench edits (section 11) and C# for what they can't say. The
+A window for writing music, kept apart from `BinaryVibrance.Lunelle` because it is UI (Vysara) and the synth is not. A song
+stays in the game's own project, as files the workbench edits (section 6) and C# for what they can't say. The
 workbench plays it, shows it, lets you steer it, and plays it again each time a file is saved.
 
-Start it with `sirrow-studio`, the app that opens a music project and compiles it again in-process with Roslyn on
-every save (below, "Opening a project"). From Sirrow's root:
+Start it with `lunelle-studio`, the app that opens a music project and compiles it again in-process with Roslyn on
+every save (below, "Opening a project"). From a checkout of LunelleStudio, with Lunelle's beside it:
 
 ```
-dotnet run --project BinaryVibrance.SirrowStudio.App -- samples/HelloSynth
-dotnet run --project BinaryVibrance.SirrowStudio.App -- new ../MyTunes        a project of your own, from HelloSynth, opened
+dotnet run --project BinaryVibrance.LunelleStudio.App -- ../Lunelle/samples/HelloSynth
+dotnet run --project BinaryVibrance.LunelleStudio.App -- new ../MyTunes        a project of your own, from HelloSynth, opened
 ```
 
 [`samples/HelloSynth`](../samples/HelloSynth) is a music project to start from: a demo song, four patches, a kit, two
 cues and a macro. An app can also host the workbench itself over a catalog of its own ("Hosting the workbench in an
-app of your own", at the end of this section), though `sirrow-studio` is the way a game's music is written.
+app of your own", at the end of this section), though `lunelle-studio` is the way a game's music is written.
 
 What it shows, one job at a time: a rail down the left gives the middle of the window to **Arrange**, **Patch**,
 **Kit** or **Files**, and the keyboard docked along the bottom plays what that mode has chosen.
@@ -709,7 +414,7 @@ What it shows, one job at a time: a rail down the left gives the middle of the w
   value) joined by all or any, or as text where rows can't hold it. Beside them **the cues**: a slider for a `Cue` with
   the levels parts and exits wait on marked over it and what waits on each, a button per value for a `Cue<T>`; one the
   song doesn't read is disabled. The part chosen is in the panel under the board, past a splitter.
-- **The roll.** When the song has a file (section 11) and the part chosen is data there, it is edited below in place of
+- **The roll.** When the song has a file (section 6) and the part chosen is data there, it is edited below in place of
   its drawing. A line on rows by degree, three octaves of them to scroll through (the wheel, Shift for across), the part's
   notes brought into view as it opens, and under each chord of the section's first pass the rows its notes are on lit, its
   root brighter, as the line plays them (following the chords or not); a click on another row where notes start stacks a
@@ -745,7 +450,7 @@ What it shows, one job at a time: a rail down the left gives the middle of the w
   its class and the file points at it (`"part": { "code": "Riff" }`, `"code": "Riff"`). In Patch, **Eject to code** does
   the same for a patch (`PatchCode`, a `partial` property). A piece that is code says where it is; **Bring back as data**
   writes what its code builds back to the file, if a file can say it, and takes its member out. The host does the C#
-  (`IMusicCode`; `BinaryVibrance.SirrowStudio.Projects`' `MusicCode`, with Roslyn), and what is ejected plays once the project
+  (`IMusicCode`; `BinaryVibrance.LunelleStudio.Projects`' `MusicCode`, with Roslyn), and what is ejected plays once the project
   has compiled. A member renamed or taken out by hand fails the build at the generated call.
 - **Files** (the rail's last button): every song's and patch's file and the C# that is theirs; the one chosen shown as it
   is, copied whole or a piece at a time: a C# file's class or any member (its indent taken off), a song's track, section
@@ -760,7 +465,7 @@ that the layout is smaller than the workbench needs, so a 1280 by 800 window on 
 
 **The catalog.** The workbench plays a `WorkbenchCatalog`: the songs, patches and kits, each a name and a factory, and
 the cues. The factories matter. A build changes what a factory returns, so the workbench calls it again after every
-build rather than keeping what it made. `sirrow-studio` makes the catalog from the project's `[MusicCatalog]` class.
+build rather than keeping what it made. `lunelle-studio` makes the catalog from the project's `[MusicCatalog]` class.
 
 What it was doing is kept and restored (`CaptureState`, `RestoreState`): the song, whether it played and in which
 section, the loop, a scale played in place of the song's, the cues, the mutes, solos, gains and forced placements, and
@@ -771,14 +476,14 @@ to C, as a piano's keys lie. `Z` and `X` move it down and up an octave. `Space` 
 section. `Ctrl K` opens the command palette; `Escape` closes the palette, the library over the view, or a build's error.
 While a text field has the keys (the palette, the library's filter), the workbench leaves them alone.
 
-### Opening a project: `sirrow-studio`
+### Opening a project: `lunelle-studio`
 
-`BinaryVibrance.SirrowStudio.App` builds `sirrow-studio`, the workbench over any music project:
+`BinaryVibrance.LunelleStudio.App` builds `lunelle-studio`, the workbench over any music project:
 
 ```
-sirrow-studio <project.csproj | its folder> [--extension <csproj>]
+lunelle-studio <project.csproj | its folder> [--extension <csproj>]
                                                  the workbench over that project, with its extension
-sirrow-studio new <folder>                      a project to start from (HelloSynth's, renamed), opened
+lunelle-studio new <folder>                      a project to start from (HelloSynth's, renamed), opened
 ```
 
 Under `dotnet run` the arguments follow `--`, as above. A game can keep a one-line script beside its music that runs it
@@ -786,12 +491,12 @@ Under `dotnet run` the arguments follow `--`, as above. A game can keep a one-li
 shaders beside it, built from the Kaldra it shares with the music it opens.
 
 A music project is an ordinary class library whose assembly names its catalog:
-`[assembly: MusicCatalog(typeof(Catalog))]` (`BinaryVibrance.Sirrow.Synth.Music`). The workbench reads the class's public static
+`[assembly: MusicCatalog(typeof(Catalog))]` (`BinaryVibrance.Lunelle.Music`). The workbench reads the class's public static
 `Songs`, `Patches` and `Kits` (lists of `(string Name, Func<T> Build)`), `Cues` (`IReadOnlyList<CueBase>`) and
 `string? MacroName(int id)`, whichever it has. The attribute is the synth's, not the workbench's, so a game's audio
 library carries it without referencing any UI.
 
-`BinaryVibrance.SirrowStudio.Projects` does the work, with no window, so tests and other hosts use it as the app does:
+`BinaryVibrance.LunelleStudio.Projects` does the work, with no window, so tests and other hosts use it as the app does:
 - **`MusicProject.OpenAsync(csproj)`** asks a design-time build (`dotnet msbuild -t:PrepareResources;Compile` with
   the compiler's execution skipped, out of process, restoring first if the project never was, in the host's
   configuration when it says which) for the compiler's command line, and makes it a Roslyn project: sources,
@@ -811,15 +516,15 @@ library carries it without referencing any UI.
   workbench started, is refused with a message naming both files (`SharedReferences`, by module version id). A change
   to the project's own references (another project of the game's) needs the workbench restarted.
 - **`ProjectTemplate.Create(folder)`** is what `new` writes: HelloSynth's C# and music files, its namespace renamed for
-  the folder. Its `.csproj` references `BinaryVibrance.Sirrow.dll` and `BinaryVibrance.Sirrow.Synth.dll` from the workbench's own folder, and
+  the folder. Its `.csproj` references `BinaryVibrance.Sirrow.dll` and `BinaryVibrance.Lunelle.dll` from the workbench's own folder, and
   the music generator beside them as its analyzer, so they always match.
-- **What it was doing** is kept beside the project, in `.sirrow-studio/workbench.json` (`WorkbenchStateFile.Beside`), restored
+- **What it was doing** is kept beside the project, in `.lunelle-studio/workbench.json` (`WorkbenchStateFile.Beside`), restored
   once the first build has played.
 
 **Extensions: a game's own tools.** A game that has more to offer than the music (its mix to play into, so a song
 sounds as it will in the game; its own controls; a recorded car under the music) writes an extension, in an assembly
 of its own: `[assembly: WorkbenchExtension(typeof(StudioExtras))]` on a public class implementing `IWorkbenchExtension`
-(in `BinaryVibrance.SirrowStudio`, so it needs no Roslyn or MSBuild):
+(in `BinaryVibrance.LunelleStudio`, so it needs no Roslyn or MSBuild):
 
 - `Output(AudioEngine)`: the bus the music plays into, or null for the workbench's own.
 - `Catalog`: its own build of the music, to play at once while the project's first compile runs, or null to wait.
@@ -830,8 +535,8 @@ of its own: `[assembly: WorkbenchExtension(typeof(StudioExtras))]` on a public c
   change to them is heard as it is saved); `Dispose`.
 
 The music project names its extension's project with an MSBuild property,
-`<SirrowStudioExtension>../Game.Studio/Game.Studio.csproj</SirrowStudioExtension>`, or `--extension <csproj>` gives
-one (`--extension none` for none). `sirrow-studio` builds it in its own configuration and loads it once into the
+`<LunelleStudioExtension>../Game.Studio/Game.Studio.csproj</LunelleStudioExtension>`, or `--extension <csproj>` gives
+one (`--extension none` for none). `lunelle-studio` builds it in its own configuration and loads it once into the
 default context before the window opens, where the music's builds share what it references, as they share Kaldra; its
 own references load from beside it. It is built without building its references again (`BuildProjectReferences`
 false), taking them as they were last built, so it shares the very Kaldra the workbench's own build made: a shared
@@ -841,7 +546,7 @@ them. A game's script that starts the workbench builds the extension first, from
 `studio.ps1`), so its own references are up to date. It isn't reloaded: a change to its project's sources is said beside the build pill
 ("Game.Studio changed: restart to take it up"), and needs the workbench restarted. One built against
 another build of what the workbench runs is refused, as a project is (`SharedReferences`; a library built for several
-frameworks, Vysara, is compared only between builds for the same framework). `sirrow-studio` runs on the newest .NET
+frameworks, Vysara, is compared only between builds for the same framework). `lunelle-studio` runs on the newest .NET
 installed (`RollForward` `LatestMajor`), so it opens a project, and loads an extension, that targets a newer .NET than
 Kaldra does.
 
@@ -851,7 +556,7 @@ again after a save in 0.35 to 0.45 s on a Snapdragon X: well under a bar (2.2 s 
 ### Hosting the workbench in an app of your own
 
 An app can put the workbench in a window of its own over a catalog it makes itself, and run under `dotnet watch` for
-hot reload in place of `sirrow-studio`'s compiles. It is the way to take the workbench somewhere `sirrow-studio`
+hot reload in place of `lunelle-studio`'s compiles. It is the way to take the workbench somewhere `lunelle-studio`
 can't go; for a game's own mix and controls beside the music, an extension (above) is simpler. Cut to what matters:
 
 ```csharp
@@ -881,17 +586,17 @@ protected override void Update(FrameTime time)
 // ... and Audio.Update() once a frame, Pause/Resume, SetFocused and Dispose (audio.md, "Turning it on")
 ```
 
-`sirrow-studio`'s own app (`BinaryVibrance.SirrowStudio.App/WorkbenchApp.cs`) is this, with a `MusicProject` handing it
+`lunelle-studio`'s own app (`BinaryVibrance.LunelleStudio.App/WorkbenchApp.cs`) is this, with a `MusicProject` handing it
 each build (`WorkbenchProject`). `WorkbenchView.TransportExtras` is a panel for the host's own controls, on a row of
 its own across the transport bar once asked for, scrolling sideways if even that is too narrow. The workbench uses
-only `BinaryVibrance.Sirrow.Synth`'s public API, so a game can build a tool of its own the
+only `BinaryVibrance.Lunelle`'s public API, so a game can build a tool of its own the
 same way: a placement's `Section`, `Track`, `Condition` (whose `ToString` says it in words), `LevelCue` and
 `IsOnPhrase`; a cue's `OptionNames` and `OptionValue`; the player's `Get` and `Set` for any cue, `SectionTick` for a
 playhead, and `Pattern(placement)`, one pass of a part's notes as the sequencer plays them.
 
 ### What hot reload can and can't do
 
-Under `dotnet watch`, in an app hosting the workbench itself. `sirrow-studio` has none of these limits: it compiles the
+Under `dotnet watch`, in an app hosting the workbench itself. `lunelle-studio` has none of these limits: it compiles the
 project whole and loads each build into a context of its own, whose static fields start afresh.
 
 - **A song, a patch and a kit are built by a method or a property, every time.** A `static readonly` field is
@@ -910,18 +615,18 @@ The mutes, solos, gains and forced placements carry over by name.
 
 ---
 
-## 11. Music as data
+## 6. Music as data
 
-A patch or a song can be a file rather than code: JSON a tool writes and reads back exactly, which Kaldra's music
+A patch or a song can be a file rather than code: JSON a tool writes and reads back exactly, which Lunelle's music
 generator turns into the C# a person would have written as the project builds. The game builds and runs the C#, so
 NativeAOT and the browser are as they were; the workbench edits the files.
 
-**`sirrow-patch/1`** (`PatchFile`): a `PatchSpec` as JSON. Each operator is named and routed by name, and only what differs
+**`lunelle-patch/1`** (`PatchFile`): a `PatchSpec` as JSON. Each operator is named and routed by name, and only what differs
 from a new spec's defaults is written, so `Write` then `Read` gives back the same spec, float for float.
 
 ```json
 {
-  "format": "sirrow-patch/1",
+  "format": "lunelle-patch/1",
   "name": "electric-piano",
   "about": "An electric piano: a tine's bell over a tone bar that barks when struck hard",
   "operators": [
@@ -938,10 +643,10 @@ A kind is `sine`, `saw`, `pulse`, `noise`, `level`, `string`, `tube` or `modes`;
 envelope is `"gate"`, `"decay s"` or `"adsr a d s r"`; a mode `"at ratio seconds [level]"` or `"fixed hz seconds
 [level]"`; a macro its number. `PatchSpec.About` carries `"about"`.
 
-**`sirrow-song/2`** (`SongFile`): a song, its patches, kits, cues and macros named, written a part to a line:
+**`lunelle-song/2`** (`SongFile`): a song, its patches, kits, cues and macros named, written a part to a line:
 `SongFile.Write(song, names)` from a built song (`SongNames` says what the catalog calls each patch, kit and macro, and
 gives a group's effects, which a built song can't), `ToJson` to add what a built song can't say before writing (its
-hooks), and `Load(json, bindings)` to build one at run time (`SongBindings` binds the names). A `kaldra-song/1` file,
+hooks), and `Load(json, bindings)` to build one at run time (`SongBindings` binds the names). A `loom-song/1` file,
 whose song-wide `order` or `conduct` chose the next section, is refused, saying how to move it to each section's exits.
 Its pieces:
 
@@ -958,13 +663,13 @@ Its pieces:
 A condition (`ConditionText`) is `"intensity > 0.6"`, `"intensity < 0.2"`, `"biome is Forest"` or the section's pass,
 `"pass < 2"`, joined by `and`, `or`, `not` and brackets.
 
-**The generator** (`BinaryVibrance.Sirrow.Music.Generator`) reads a project's `AdditionalFiles` ending `.patch.json` and
+**The generator** (`BinaryVibrance.Lunelle.Music.Generator`) reads a project's `AdditionalFiles` ending `.patch.json` and
 `.song.json`. Every patch file becomes a property of one `static partial class Patches` in the project's root namespace,
 named for its file (`electric-piano.patch.json` is `Patches.ElectricPiano`), written as `PatchCode` writes it. Every song
 file becomes `static partial class OpenRoad` (from `open-road.song.json`) with `public static Song Build()`, in the
 namespace of its folder. A name in a song is a member of the project's classes: `Patches.UprightBass`, `Kits.General`,
 `Cues.Intensity`, `Macros.Bright`; a choice cue's enum and an effect's argument types come from the compilation. What a
-file says that can't be code is an error, `SIRROWMUSIC001`, at its line in the file.
+file says that can't be code is an error, `LUNELLEMUSIC001`, at its line in the file.
 
 What a file can't say is code, declared by the generated class and written in the game's own half of it, so a missing or
 renamed member fails the build: a part (`private static partial Part Name();`), a placement (`private static partial
@@ -976,19 +681,37 @@ Placement Name(Section section, SongTrack track);`), a patch (`public static par
   <AdditionalFiles Include="Patches\*.patch.json;Songs\*.song.json" />
   <CompilerVisibleProperty Include="RootNamespace" />
   <CompilerVisibleProperty Include="ProjectDir" />
-  <ProjectReference Include="..\Sirrow\BinaryVibrance.Sirrow.Music.Generator\BinaryVibrance.Sirrow.Music.Generator.csproj"
+  <ProjectReference Include="..\Lunelle\BinaryVibrance.Lunelle.Music.Generator\BinaryVibrance.Lunelle.Music.Generator.csproj"
                     OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
 </ItemGroup>
 ```
 
-The classes the names are found in can be others (`SirrowMusicPatches`, `SirrowMusicKits`, `SirrowMusicCues`,
-`SirrowMusicMacros`, each made visible the same way). `MusicGeneratorTests` checks that the generated patch and song build
+The classes the names are found in can be others (`LunelleMusicPatches`, `LunelleMusicKits`, `LunelleMusicCues`,
+`LunelleMusicMacros`, each made visible the same way). `MusicGeneratorTests` checks that the generated patch and song build
 what `PatchFile.Load` and `SongFile.Load` build from the same files; RubberTrack moved its 48 patches and ten songs onto
 the files and every render stayed bit-identical.
 
 ---
 
-## 12. Not built yet
+## 7. Taking a sound apart: `BinaryVibrance.Lunelle.Analysis`
+
+For designing a patch like a recording, or judging a change to a mix without ears. Each takes one channel (or
+interleaved stereo for a mix) and its rate, and, like Sirrow's `AudioAnalysis`, allocates.
+
+| Call | What it measures |
+|---|---|
+| `HitMeasures.Onsets` | Where each hit starts: a jump of 9 dB in the loudest of the last 20 ms |
+| `HitMeasures.Pitch` | The pitch under a frequency at given times, from its half-cycles: a kick's fall |
+| `HitMeasures.Tones` | The tones standing out of the body (`Tone`: hertz, level) |
+| `HitMeasures.Brightness` | The spectrum's centre over a window from a time: how the top fades |
+| `HitMeasures.Flatness`, `BandEnvelope` | Each band's noisiness (1 noise, near 0 a tone) and its level over time |
+| `HitMeasures.Tail` | How long until it stays under a share of its peak |
+| `NoteMeasures.Partials` | A note's partials (`Partial`), its fundamental, and whether they are harmonics |
+| `NoteMeasures.Ring` | How one partial rings (`PartialRing`): its peak and when, its fall early and late, how it beats |
+| `NoteMeasures.Strike` | How much brighter the first 15 ms are than 60 ms in |
+| `MixMeasures.Balance`, `Spread` | A mix's energy by band, its centre, its crest, how wide it is; a stretch in brief |
+
+## 8. Not built yet
 
 - **Music in the browser costs too much to play.** There the mix runs on the frame thread, and a song of eight tracks
   costs several milliseconds of each frame; rendering it ahead on a worker (`AudioOptions.BrowserThread`) has hung the

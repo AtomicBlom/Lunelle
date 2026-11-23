@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/HelloSynth/HelloSynth.csproj" />
+  </Folder>
+  <Project Path="BinaryVibrance.Lunelle.Music.Generator/BinaryVibrance.Lunelle.Music.Generator.csproj" />
+  <Project Path="BinaryVibrance.Lunelle.Tests/BinaryVibrance.Lunelle.Tests.csproj" />
+  <Project Path="BinaryVibrance.Lunelle/BinaryVibrance.Lunelle.csproj" />
+</Solution>

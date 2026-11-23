@@ -1,0 +1,23 @@
+<Project>
+
+  <!--
+    Where Sirrow comes from: a checkout of github.com/AtomicBlom/Sirrow, its folder ending in a slash. By default
+    ..\Sirrow\ beside this repository's checkout. SirrowSource names another, set before this is imported or as an
+    environment variable, which reaches every project of every repository a build takes in at once. Directory.Build.props
+    imports this.
+
+    SirrowSource none takes Sirrow's released package instead, at the version Directory.Packages.props pins: how
+    Lunelle's package is packed for release, so that its dependency is on a Sirrow that exists.
+  -->
+  <PropertyGroup>
+    <SirrowSource Condition="'$(SirrowSource)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\Sirrow\'))</SirrowSource>
+    <SirrowSource Condition="'$(SirrowSource)' != 'none' and !HasTrailingSlash('$(SirrowSource)')">$(SirrowSource)\</SirrowSource>
+  </PropertyGroup>
+
+  <!-- A missing checkout said plainly, rather than as a project that can't be found -->
+  <Target Name="_LunelleCheckSirrowSource" BeforeTargets="CollectPackageReferences;ResolveProjectReferences"
+          Condition="'$(_LunelleNeedsSirrowSource)' == 'true' and '$(SirrowSource)' != 'none' and !Exists('$(SirrowSource)BinaryVibrance.Sirrow\BinaryVibrance.Sirrow.csproj')">
+    <Error Text="Lunelle builds on Sirrow from a checkout, and there is none at SirrowSource '$(SirrowSource)': clone github.com/AtomicBlom/Sirrow beside Lunelle's checkout, or set SirrowSource (an environment variable reaches every repository)." />
+  </Target>
+
+</Project>
