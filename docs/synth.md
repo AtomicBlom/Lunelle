@@ -523,7 +523,16 @@ While a text field has the keys (the palette, the library's filter), the workben
 lunelle-studio <project.csproj | its folder> [--extension <csproj>]
                                                  the workbench over that project, with its extension
 lunelle-studio new <folder>                      a project to start from (HelloSynth's, renamed), opened
+lunelle-studio <folder> --data                   the folder's music files alone, nothing compiled
 ```
+
+**Music files alone.** A folder with no `.csproj` in it, or any folder with `--data`, opens with no C#: it is read as a
+`MusicFolder` (section 6), whose songs build from their files as a song with a file always does in the workbench
+(`FolderCatalog`), and read again 150 ms after any of its music files changes (`WorkbenchFolder`, in place of
+`WorkbenchProject`); the build pill says "read" and lists the files left out and each song's code, which plays as rests.
+Nothing is offered as C# (moving a part or a patch into code), and there is no extension, since one is C# to build. What
+it was doing is kept in the folder's own `.lunelle-studio/workbench.json`. Neither MSBuild nor Roslyn runs, which is what
+a host that has neither (a browser) needs; `FolderCatalog` is in `BinaryVibrance.LunelleStudio` for it.
 
 Under `dotnet run` the arguments follow `--`, as above. A game can keep a one-line script beside its music that runs it
 (RubberTrack's `studio.ps1`). It isn't a `dotnet tool`: it is a Kaldra app, with native libraries (SDL 3) and compiled
