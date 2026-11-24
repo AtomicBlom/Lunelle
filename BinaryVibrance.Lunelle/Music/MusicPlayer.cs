@@ -225,7 +225,8 @@ public sealed class MusicPlayer : IDisposable
 	/// Makes <paramref name="song"/> ready to play, in <paramref name="scale"/> or its own: compiles it and makes its chip's
 	/// voices and effects, the costly part of starting a song. It touches nothing of the player's or the engine's, so it may
 	/// run on any thread, as a game does it while a level loads; hand the result to <see cref="Play(PreparedSong, float)"/>.
-	/// The song's rolls (<see cref="Song.Roll"/>) are drawn from <paramref name="seed"/>: the same seed, the same picks.
+	/// The song's variations (<see cref="Song.Variation"/>) that pick at random or shuffle draw from <paramref name="seed"/>:
+	/// the same seed, the same picks.
 	/// </summary>
 	public PreparedSong Prepare(Song song, Scale? scale = null, uint seed = 0)
 	{
@@ -331,10 +332,22 @@ public sealed class MusicPlayer : IDisposable
 		Write(cue, Cue<T>.ToValue(value));
 	}
 
-	/// <summary>A level cue's value as last told, or its initial value; a roll's as last drawn, up to the player's lead ahead of what is heard.</summary>
+	/// <summary>A level cue's value as last told, or its initial value.</summary>
 	public float Get(Cue cue) => CueValue(cue);
 
-	/// <summary>Any cue's value as last told, or its initial value: a choice's as its number (<see cref="CueBase.OptionValue"/>).</summary>
+	/// <summary>
+	/// The option a song's variation last picked (<see cref="Song.Variation"/>), 1 to its <see cref="Variation.Options"/>;
+	/// 1 before its first pick or when its song isn't the one playing. Picked as a section starts, up to the player's lead
+	/// ahead of what is heard.
+	/// </summary>
+	public int Get(Variation variation)
+	{
+		ArgumentNullException.ThrowIfNull(variation);
+		return (int)MathF.Round(CueValue(variation));
+	}
+
+	/// <summary>Any cue's value as last told, or its initial value: a choice's as its number (<see cref="CueBase.OptionValue"/>);
+	/// a variation's as the option it last picked.</summary>
 	public float Get(CueBase cue)
 	{
 		ArgumentNullException.ThrowIfNull(cue);
@@ -345,17 +358,22 @@ public sealed class MusicPlayer : IDisposable
 	/// Tells the music any cue's value as the player holds it: a level, or a choice's number (<see cref="CueBase.OptionValue"/>).
 	/// For a tool that shows every kind of cue alike; a game uses the typed overloads.
 	/// </summary>
+	/// <exception cref="ArgumentException"><paramref name="cue"/> is a song's variation, which the song picks for itself.</exception>
 	public void Set(CueBase cue, float value)
 	{
 		ArgumentNullException.ThrowIfNull(cue);
+		if (cue is Variation)
+			throw new ArgumentException($"'{cue.Name}' is a song's variation, which the song picks for itself as a section starts.", nameof(cue));
 		Write(cue, value);
 	}
 
 	private float CueValue(CueBase cue)
 	{
-		// A roll is the song's, drawn on the audio thread: read where it was drawn
-		if (_source?.State is { } playing && playing.Song.Song.IsRoll(cue))
-			return Volatile.Read(ref playing.Cues[playing.Song.SlotOf(cue)]);
+		// A variation is the song's, picked on the audio thread: read where it was picked
+		if (cue is Variation)
+			return _source?.State is { } playing && playing.Song.SlotOf(cue) is >= 0 and var slot
+				? Volatile.Read(ref playing.Cues[slot])
+				: cue.InitialValue;
 		return _cues.TryGetValue(cue, out var value) ? value : cue.InitialValue;
 	}
 

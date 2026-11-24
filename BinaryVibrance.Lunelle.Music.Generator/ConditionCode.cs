@@ -6,13 +6,13 @@ namespace BinaryVibrance.Lunelle.Music.Generator;
 /// <summary>
 /// A song file's condition (Lunelle's ConditionText: <c>"intensity &gt; 0.6 and not biome is Forest"</c>) as C#, a placement's
 /// or an exit's <c>Condition</c>: <c>Cues.Intensity.Above(0.6f) &amp; !Cues.Biome.Is(Biome.Forest)</c>. <c>pass</c> is the
-/// section's pass in a row (<c>"pass &lt; 2"</c> as <c>Pass.Below(2)</c>); a song's roll is its variable (<c>"fill &lt; 0.33"</c>
-/// as <c>fill.Below(0.33f)</c>).
+/// section's pass in a row (<c>"pass &lt; 2"</c> as <c>Pass.Below(2)</c>); a song's variation is its variable (<c>"fill is 2"</c>
+/// as <c>fill.Is(2)</c>).
 /// </summary>
 internal sealed class ConditionCode(MusicContext context)
 {
-	/// <summary>The rolls of the song being written, by name, each as its variable.</summary>
-	public IReadOnlyDictionary<string, string> Rolls { get; set; } = new Dictionary<string, string>();
+	/// <summary>The variations of the song being written, by name, each as its variable and how many options it has.</summary>
+	public IReadOnlyDictionary<string, (string Var, int Options)> Variations { get; set; } = new Dictionary<string, (string, int)>();
 
 	private abstract record Node;
 
@@ -51,13 +51,13 @@ internal sealed class ConditionCode(MusicContext context)
 			var kind = c.Op switch { ">" => "Above", "<" => "Below", _ => "Is" };
 			return $"global::BinaryVibrance.Lunelle.Music.Pass.{kind}({count})";
 		}
-		if (Rolls.TryGetValue(c.Cue, out var roll))
+		if (Variations.TryGetValue(c.Cue, out var variation))
 		{
-			if (c.Op == "is")
-				throw new JsonError($"\"{c.Cue}\" is a roll, a level, so it can't be \"is {c.Value}\"", where.Span);
-			if (!float.TryParse(c.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
-				throw new JsonError($"\"{c.Value}\" isn't a number", where.Span);
-			return $"{roll}.{(c.Op == ">" ? "Above" : "Below")}({Code.F(c.Value)})";
+			if (c.Op != "is")
+				throw new JsonError($"\"{c.Cue}\" is a variation, so it is \"is\" one of its options (\"{c.Cue} is 2\"), not {c.Op} one", where.Span);
+			if (!int.TryParse(c.Value, NumberStyles.None, CultureInfo.InvariantCulture, out var option) || option < 1 || option > variation.Options)
+				throw new JsonError($"\"{c.Cue}\" has options 1 to {variation.Options}, not \"{c.Value}\"", where.Span);
+			return $"{variation.Var}.Is({option})";
 		}
 		if (!context.HasCue(c.Cue))
 			throw new JsonError($"no cue is named \"{c.Cue}\" in {context.Options.Cues}", where.Span);

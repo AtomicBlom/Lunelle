@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace BinaryVibrance.Lunelle.Music.Generator;
@@ -79,20 +80,42 @@ internal sealed class SongEmitter(MusicContext context)
 				body.Add($"song.{property} = [{string.Join(", ", value.Items.Select(context.Effect))}];");
 			}
 
-		var rolls = new Dictionary<string, string>();
-		foreach (var roll in root["rolls"]?.Items ?? [])
+		if (root["rolls"] is { } oldRolls)
+			throw new JsonError("\"rolls\" are \"variations\" now: { \"name\": \"fill\", \"options\": 3 } each, chosen in conditions with \"fill is 2\"", oldRolls.Span);
+		var variations = new Dictionary<string, (string Var, int Options)>();
+		foreach (var variation in root["variations"]?.Items ?? [])
 		{
-			var rollName = roll.Str ?? throw new JsonError("a roll is a name (\"fill\")", roll.Span);
-			if (rolls.ContainsKey(rollName))
-				throw new JsonError($"two rolls are named '{rollName}'", roll.Span);
-			if (context.FindsCue(rollName))
-				throw new JsonError($"the roll '{rollName}' has the name of a cue in {context.Options.Cues}: name it apart, so a condition says which it means", roll.Span);
-			var v = Var(rollName, "Roll");
-			rolls[rollName] = v;
-			body.Add($"var {v} = song.Roll({Code.Quote(rollName)});");
+			var variationName = variation["name"]?.Str ?? throw new JsonError("a variation has a \"name\" (\"fill\")", variation.Span);
+			if (variations.ContainsKey(variationName))
+				throw new JsonError($"two variations are named '{variationName}'", variation.Span);
+			if (context.FindsCue(variationName))
+				throw new JsonError($"the variation '{variationName}' has the name of a cue in {context.Options.Cues}: name it apart, so a condition says which it means", variation.Span);
+			if (!int.TryParse(variation["options"]?.Num, NumberStyles.None, CultureInfo.InvariantCulture, out var options) || options < 2)
+				throw new JsonError($"the variation '{variationName}' has 2 or more \"options\" (\"options\": 3)", variation.Span);
+			var pick = variation["pick"]?.Str switch
+			{
+				null or "random" => "Random",
+				"cycle" => "Cycle",
+				"shuffle" => "Shuffle",
+				var other => throw new JsonError($"the variation '{variationName}' picks \"{other}\": \"random\", \"cycle\" or \"shuffle\"", variation.Span),
+			};
+			var weights = variation["weights"]?.Items ?? [];
+			if (weights.Count > 0 && pick != "Random")
+				throw new JsonError($"the variation '{variationName}' is weighted, so it picks at random", variation.Span);
+			if (weights.Count > 0 && weights.Count != options)
+				throw new JsonError($"the variation '{variationName}' has {options} options and {weights.Count} weights: one each", variation.Span);
+			var weightCode = weights.Count > 0
+				? $", [{string.Join(", ", weights.Select(w => Code.F(w.Num ?? throw new JsonError("a weight is a number", w.Span))))}]"
+				: "";
+			var v = Var(variationName, "Variation");
+			variations[variationName] = (v, options);
+			body.Add($"var {v} = song.Variation({Code.Quote(variationName)}, {options}, global::BinaryVibrance.Lunelle.Music.VariationPick.{pick}{weightCode});");
 		}
-		_conditions.Rolls = rolls;
-		string CueRef(string cueName) => rolls.TryGetValue(cueName, out var v) ? v : context.Cue(cueName);
+		_conditions.Variations = variations;
+		// A level or a macro follows a cue the game tells, never a variation, which only chooses parts
+		string LevelCue(string cueName, Json where) => variations.ContainsKey(cueName)
+			? throw new JsonError($"'{cueName}' is a variation, which chooses parts: nothing follows it", where.Span)
+			: context.Cue(cueName);
 
 		var groups = new Dictionary<string, string>();
 		foreach (var group in root["groups"]?.Items ?? [])
@@ -149,7 +172,7 @@ internal sealed class SongEmitter(MusicContext context)
 			{
 				var made = $"{v}.Macro({context.Macro(macro["macro"] ?? throw new JsonError("a macro names its \"macro\"", macro.Span))})";
 				if (macro["follow"]?.Str is { } follow)
-					macroLines.Add($"{made}.Follow({CueRef(follow)}, {Code.F(macro["from"]?.Num ?? "0")}, {Code.F(macro["to"]?.Num ?? "1")});");
+					macroLines.Add($"{made}.Follow({LevelCue(follow, macro)}, {Code.F(macro["from"]?.Num ?? "0")}, {Code.F(macro["to"]?.Num ?? "1")});");
 				else
 					macroLines.Add($"{made}.Set({Code.F(macro["set"]?.Num ?? throw new JsonError("a macro follows a cue or is \"set\"", macro.Span))});");
 			}
@@ -195,7 +218,7 @@ internal sealed class SongEmitter(MusicContext context)
 				if (part["when"] is { } when)
 					play.Append($".When({_conditions.Placement(when)})");
 				if (part["level"]?.Str is { } levelCue)
-					play.Append($".Level({CueRef(levelCue)})");
+					play.Append($".Level({LevelCue(levelCue, part)})");
 				if (part["onPhrase"]?.True == true)
 					play.Append(".OnPhrase()");
 				if (part["endWith"] is JsonObj fill)

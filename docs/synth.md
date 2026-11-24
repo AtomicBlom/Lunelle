@@ -336,22 +336,32 @@ and every song uses those; one a song doesn't use is remembered for the next. Co
 `cue.Below(x)`, `choice.Is(value)`, combined with `&`, `|` and `!`. **`Above(x)` turns true at x and false again only
 below x − 0.05** (`Below` mirrors it), so a part doesn't flap while a cue hovers.
 
-**Rolls.** A song can also draw a level for itself: `var fill = song.Roll("fill")` is a `Cue` the sequencer sets, from
-0 to 1, at the start of every section, held until the next, so a part can be picked afresh each time round:
+**Variations.** A song can also pick for itself, between options, each time a section comes round: one drum fill this
+time, another the next. `song.Variation("fill", 3)` is a variation with options 1 to 3, and a part takes one with `Is`:
 
 ```csharp
-a.Play(drums, fillA).When(fill.Below(0.33f));
-a.Play(drums, fillB).When(fill.Above(0.33f) & fill.Below(0.66f));
-a.Play(drums, fillC).When(fill.Above(0.66f));
+var fill = song.Variation("fill", 3, VariationPick.Shuffle);
+a.Play(drums, fillA).When(fill.Is(1));
+a.Play(drums, fillB).When(fill.Is(2));
+a.Play(drums, fillC).When(fill.Is(3));
 ```
 
-Slices of any width weight the picks. A roll's comparisons are exact, with no margin, since it jumps rather than hovers
-(a latch would keep the last pick on beside the new one): `Above(x)` holds at x or more and `Below(x)` below x, so
-slices that meet never both hold, nor both miss. It is drawn on the audio thread, as the section starts, before its
-first bar line asks its parts, which a game setting a cue could only do a section late. What it draws comes from the
-seed the song is prepared with (`player.Prepare(song, seed: worldSeed)`, 0 if none), the roll's name and how many
-sections have started, so the same seed makes the same picks, a jump draws anew, and a swap keeps the section's.
-`player.Get(fill)` reads the last draw; a roll isn't in `song.Cues`, the cues the game tells it (`song.Rolls` lists them).
+It picks as a section that names it (in a part's condition or an exit's) starts, before the section's first bar line asks
+its parts, and holds the pick until such a section starts again. How it picks:
+
+- `VariationPick.Random`, the default: each option as likely as its weight (`song.Variation("fill", 3, VariationPick.Random, [2f, 1f, 1f])`), all alike with none.
+- `VariationPick.Cycle`: in turn, 1, 2, 3, then 1 again.
+- `VariationPick.Shuffle`: every option once, in a random order, then a new order; never the same option twice running,
+  even from one order to the next.
+
+A song may have several variations at once (one for fills, one for a counter-melody). Every section that names a
+variation moves the same count on, so a cycle goes on wherever it was last picked ("the next fill, wherever"), and a
+section that doesn't name it leaves it be. The random picks come from the seed the song is prepared with
+(`player.Prepare(song, seed: worldSeed)`, 0 if none), the variation's name and how many picks it has made, so the same
+seed makes the same picks. A jump to a section that names it picks anew, as any start of it does; a swap keeps each
+variation's pick and count, matched by name. A variation only chooses parts and exits: no level or macro follows it.
+`player.Get(fill)` reads the option last picked; a variation isn't in `song.Cues`, the cues the game tells it
+(`song.Variations` lists them), and the game can't set one.
 
 **`OnBar()` against `OnPhrase()`.** An on-bar placement (the default) comes and goes at any bar line as its condition
 changes. An on-phrase one is asked only where its part starts over, and once in plays that pass out: a four-bar melody
@@ -679,7 +689,7 @@ Its pieces:
 | `tempo`, `meter`, `scale`, `voices` | The song's settings, defaults left out: `"scale": "F# minor"` |
 | `effects` | The space, echo and master sends' effects, if not the defaults |
 | `groups` | `{ "name", "effects": [{ "fx": "compressor", "thresholdDb": -18, "ratio": 3 }] }`: an effect is one of `Fx`'s factories, its arguments by their parameter names |
-| `rolls` | `["fill"]`: the song's rolls, named in conditions, levels and macros as cues are, and never a cue's name |
+| `variations` | `[{ "name": "fill", "options": 3, "pick": "shuffle" }]`: the song's own picks between options, `"pick"` `"random"` (the default, with `"weights"`, one an option, if wanted), `"cycle"` or `"shuffle"`; chosen in conditions as `"fill is 2"`, never followed by a level or a macro, and never a cue's name |
 | `tracks` | `{ "name", "patch" or "kit", "group", "octave", "level", "pan", "humanise": { "ms", "velocity" }, "swing": { "ratio", "step" }, "macros": [{ "macro", "follow", "from", "to" } or { "macro", "set" }] }` |
 | `sections` | `{ "name", "about", "bars", "chords", "parts": [...], "sweeps": [{ "track", "macro", "from", "to" }], "exits": [{ "when": "intensity > 0.7", "then": "open" }, { "then": "cruise" }] }`: the exits tried in order as it ends, the last, with no `when`, always |
 | a part | `{ "track", "name", ` a line `"line": "eighths", "notes", "overChords", "octave"`, a beat `"beat", "rows": { "kick": "x..." }`, a strum `"strum", "notes", "voicing", "spread"`, or code `"part": { "code": "Name" }`; then `"when"`, `"level"` (a cue), `"onPhrase"`, `"endWith"` (a part) `}`, or a whole placement as code `{ "track", "code": "Name" }` |

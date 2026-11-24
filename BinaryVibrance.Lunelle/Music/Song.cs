@@ -26,7 +26,7 @@ public sealed class Song(string name)
 	private readonly List<SongGroup> _groups = [];
 	private readonly List<SongTrack> _tracks = [];
 	private readonly List<Section> _sections = [];
-	private readonly List<Cue> _rolls = [];
+	private readonly List<Variation> _variations = [];
 
 	// As many as a chip has instruments
 	internal const int MaxTracks = 64;
@@ -137,34 +137,47 @@ public sealed class Song(string name)
 	/// <summary>Its groups, in the order made.</summary>
 	public IReadOnlyList<SongGroup> Groups => _groups;
 
-	/// <summary>Its rolls (<see cref="Roll"/>), in the order made.</summary>
-	public IReadOnlyList<Cue> Rolls => _rolls;
-
-	/// <summary>Whether <paramref name="cue"/> is one of its rolls, drawn by the sequencer rather than told by the game.</summary>
-	public bool IsRoll(CueBase cue) => cue is Cue level && _rolls.Contains(level);
+	/// <summary>Its variations (<see cref="Variation(string, int, VariationPick, IReadOnlyList{float})"/>), in the order made.</summary>
+	public IReadOnlyList<Variation> Variations => _variations;
 
 	/// <summary>
-	/// A roll: a level from 0 to 1 the song draws for itself at the start of every section, held until the next, so a part
-	/// can be picked afresh each time round: <c>fill.Below(0.33f)</c> for one fill, <c>fill.Above(0.33f) &amp; fill.Below(0.66f)</c>
-	/// for the next. Unlike a cue's, its comparisons are exact, with no margin: <c>Above(x)</c> holds at x or more and
-	/// <c>Below(x)</c> below x, so slices that meet never both hold, nor both miss. What it draws comes from the seed the
-	/// song was prepared with (<see cref="MusicPlayer.Prepare"/>), the roll's name and how many sections have started.
+	/// A variation: one of <paramref name="options"/> options, numbered from 1, that the song picks for itself each time a
+	/// section that names it (in a part's condition or an exit's) starts, held until the next such start, so a part can
+	/// differ each time round: <c>fill.Is(1)</c> for one drum fill, <c>fill.Is(2)</c> for another. It picks
+	/// <paramref name="pick"/>'s way: at random, as likely as each option's <paramref name="weights"/> (all alike if none);
+	/// in turn; or shuffled, every option once in a random order and never the same twice running. Every section that names
+	/// it moves the same count on, so a cycle goes on from wherever it was last picked. The random draws come from the seed
+	/// the song was prepared with (<see cref="MusicPlayer.Prepare"/>), the variation's name and how many picks it has made,
+	/// so the same seed makes the same picks.
 	/// </summary>
-	/// <exception cref="ArgumentException">The song already has a roll of that name.</exception>
-	public Cue Roll(string name)
+	/// <exception cref="ArgumentException">The song has a variation of that name already, it has fewer than 2 options, or
+	/// its weights don't fit: one each, none below 0, some above, and only for picking at random.</exception>
+	public Variation Variation(string name, int options, VariationPick pick = VariationPick.Random, IReadOnlyList<float>? weights = null)
 	{
 		CheckOpen();
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
-		if (_rolls.Exists(r => r.Name == name))
-			throw new ArgumentException($"Song '{Name}' already has a roll named '{name}'.", nameof(name));
-		var roll = new Cue(name);
-		_rolls.Add(roll);
-		return roll;
+		if (_variations.Exists(v => v.Name == name))
+			throw new ArgumentException($"Song '{Name}' already has a variation named '{name}'.", nameof(name));
+		if (options < 2)
+			throw new ArgumentException($"Variation '{name}' has {options} option{(options == 1 ? "" : "s")}: a variation picks between 2 or more.", nameof(options));
+		weights ??= [];
+		if (weights.Count > 0)
+		{
+			if (pick != VariationPick.Random)
+				throw new ArgumentException($"Variation '{name}' is weighted, so it picks at random, not by {pick.ToString().ToLowerInvariant()}.", nameof(weights));
+			if (weights.Count != options)
+				throw new ArgumentException($"Variation '{name}' has {options} options and {weights.Count} weights: one each.", nameof(weights));
+			if (weights.Any(w => !(w >= 0f) || float.IsInfinity(w)) || !(weights.Sum() > 0f))
+				throw new ArgumentException($"Variation '{name}' has a weight below 0, or none above: each is 0 or more, and some more.", nameof(weights));
+		}
+		var variation = new Variation(name, options, pick, [.. weights]);
+		_variations.Add(variation);
+		return variation;
 	}
 
 	/// <summary>
 	/// Every cue a condition (a part's or an exit's), a level or a macro names, each once, in the order first named: the
-	/// cues the game tells it, so not its <see cref="Rolls"/>, which it draws for itself.
+	/// cues the game tells it, so not its <see cref="Variations"/>, which it picks for itself.
 	/// </summary>
 	public IReadOnlyList<CueBase> Cues
 	{
@@ -173,7 +186,7 @@ public sealed class Song(string name)
 			var cues = new List<CueBase>();
 			void Add(CueBase cue)
 			{
-				if (!cues.Contains(cue) && !IsRoll(cue))
+				if (!cues.Contains(cue) && cue is not global::BinaryVibrance.Lunelle.Music.Variation)
 					cues.Add(cue);
 			}
 			foreach (var track in _tracks)

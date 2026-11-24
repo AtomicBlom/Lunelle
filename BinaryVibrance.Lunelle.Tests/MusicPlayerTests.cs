@@ -386,6 +386,9 @@ public class MusicPlayerTests
 		var section = song.Section("a", 2, "I | IV");
 		section.Play(drums, Beat.Eighths((Kit.Kick, "x...x..."), (Kit.HatClosed, "xxxxxxxx")));
 		section.Play(lead, Line.Eighths("1 3 5 3 1 3 5 8").OverChords()).When(cue.Above(0.5f) & !mood.Is(Mood.Calm)).Level(cue);
+		// A variation shuffled anew each round as the section starts over
+		var fill = song.Variation("fill", 3, VariationPick.Shuffle);
+		section.Play(drums, Beat.Eighths((Kit.Kick, "....x..x"))).When(fill.Is(2));
 		var device = new OfflineAudioDevice(MusicRig.Rate, 256);
 		using var engine = new AudioEngine(device);
 		using var player = new MusicPlayer(engine, engine.Master);
