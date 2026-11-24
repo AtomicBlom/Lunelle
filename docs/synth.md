@@ -146,6 +146,11 @@ manifest's folder, so a kit loads from disk, embedded resources or a package ali
 
 A missing file, a layer with no takes, or layers out of rising `upTo` order throw `InvalidDataException` naming the
 manifest and the piece.
+
+A piece can be a patch in place of layers, `{ "piece": "kick", "patch": "breaks-kick", "choke": 0 }`, synthesised as
+`FromPatches` makes it: `DrumKit.Load(read, path, patch)` finds each by name through `patch`, and a piece naming both a
+patch and layers, or a patch `patch` doesn't know, is refused. So a synthesised kit can be a file as a sampled one is.
+
 ## 3. The chip: `SynthChip`
 
 A `SynthChip` is an `AudioSource` that plays instruments on a pool of voices:
@@ -725,6 +730,37 @@ The classes the names are found in can be others (`LunelleMusicPatches`, `Lunell
 `LunelleMusicMacros`, each made visible the same way). `MusicGeneratorTests` checks that the generated patch and song build
 what `PatchFile.Load` and `SongFile.Load` build from the same files; RubberTrack moved its 48 patches and ten songs onto
 the files and every render stayed bit-identical.
+
+### A project of files alone: `MusicFolder`
+
+A project needn't have code at all. `MusicFolder.Load(paths, read)` (or `FromDirectory`) takes every file it is given,
+each read through `read` by its path, so a folder, a zip or a browser's storage load alike:
+
+| File | Is |
+|---|---|
+| `*.song.json` | A song, named by its `"name"`, built by `SongFile.Load` each time it is asked for |
+| `*.patch.json` | A patch, named by its file (`electric-piano.patch.json` is "electric-piano"), as the generator names it |
+| `kit.json`, `*.kit.json` | A kit, sampled or of patches (section 2), named by its `"name"`, loaded once on first asking |
+| `lunelle-project.json` | At the root: what a project with code declares in C#, its cues and macros |
+
+```json
+{
+  "format": "lunelle-project/1",
+  "name": "HelloSynth",
+  "cues": [
+    { "name": "intensity", "initial": 0.3 },
+    { "name": "mood", "options": ["Calm", "Bright", "Dark"], "initial": "Calm" }
+  ],
+  "macros": { "bright": 0 }
+}
+```
+
+A cue with `"options"` is a `ChoiceCue`, a choice among names rather than an enum's values; option `i` is the value `i`,
+as an enum numbered from 0 is, so a song's `"mood is Dark"` plays the same against either. Its `Bindings` bind a song's
+names to the folder's own. What a song names as code has none: a part or a placement plays a `Rest` (a bar of nothing,
+on any track), a hook doesn't run, and `CodeIn(song)` lists each (`"part Riff"`, `"placement Counter"`, `"hook
+OnBuilt"`), so a song that is mostly data still plays, short of its code. A patch file that is code, or any file that
+can't be read, is left out and said in `Problems`, one line a file, and the rest load.
 
 ---
 
