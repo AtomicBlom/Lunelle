@@ -24,6 +24,15 @@ public class StrumTests
 	}
 
 	[Test]
+	public void Rootless_chords_leave_the_root_to_the_bass_and_keep_to_one_register()
+	{
+		Strum.Rootless(10, [0, 4, 7, 10, 14, 21], 4).ShouldBe([62, 68, 72, 79]);    // Bb13: D Ab C G
+		Strum.Rootless(3, [0, 4, 7, 11, 14], 4).ShouldBe([67, 74, 77]);            // Ebmaj9: G D F
+		Strum.Rootless(0, [0, 4, 7, 10, 13], 4).ShouldBe([64, 70, 73]);            // C7b9: E Bb Db
+		Strum.Rootless(7, [0, 3, 7, 10], 4).ShouldBe([70, 74, 77]);                // Gm7: Bb D F, the fifth kept
+	}
+
+	[Test]
 	public void A_down_then_an_up_stroke_in_time()
 	{
 		var song = new Song("strum") { Scale = Scale.Minor(Note.E), Tempo = 120 };

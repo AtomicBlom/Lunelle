@@ -245,9 +245,14 @@ A `Scale` is a root and its steps: `Major`, `Minor`, `Dorian`, `Phrygian`, `Lydi
 `Degree(1)` is the root, 8 the octave above, 0 the step below. A player plays a song in its own scale or another
 (`Play(song, Scale.Major(Note.G))`), which moves every note and no drum hit.
 
-A `Chord` is a Roman numeral, its case meaning nothing (the scale decides major or minor): `i`, `VI5`, `bVII`, `V7`,
-`ivsus4`. Flats and sharps go first; the suffixes are `M`, `m`, `5`, `sus2`, `sus4`, `7`, `dim`. With none, the scale's
-own triad on that degree, diminished included. A section's chords are bars separated by `|`, each one chord, or two or
+A `Chord` is a Roman numeral and a chord symbol's suffix, the numeral's case meaning nothing (the scale decides major or
+minor): `i`, `VI5`, `bVII`, `V7`, `ivsus4`, `Imaj9`, `vim9`, `VIM7b9`, `V13`, `I6/9`. Flats and sharps go first; then,
+each optional and in this order, a quality (`M`, `m`, `dim`, or `5` alone for a power chord), an extension (`6`, `6/9`,
+`7`, `9`, `11`, `13`, with `maj` before the last four for the major seventh), `sus2` or `sus4`, `add9`, and alterations
+(`b5`, `#5`, `b9`, `#9`, `#11`, `b13`, in brackets or not). With no quality, the scale's own triad on that degree,
+diminished included, and its own seventh: `V7` in a major key is the dominant seventh, `I7` the major seventh. A quality
+makes the seventh minor whatever the scale (diminished on `dim`), so `VIM7` is the dominant seventh on the sixth degree.
+A thirteenth leaves out the eleventh, as players do. A section's chords are bars separated by `|`, each one chord, or two or
 four sharing the bar: `"i | VI | III VII | i"`.
 
 ### The notations
@@ -290,7 +295,9 @@ section's at that step.
 
 A strum rings until the next character that isn't `.`. `Voicing(Open)` lays the chord as a guitar plays it in the first
 frets (`Power` and `Triad` too); `Voicing(Close)` stacks its notes up from the root in the track's octave, as a hand
-plays it on keys, which with `Spread(0)` sounds as block chords; `Spread(ms)` sets the time between strings (12 ms).
+plays it on keys, which with `Spread(0)` sounds as block chords; `Voicing(Rootless)` leaves the root to the bass, and
+the fifth where four notes are left, keeping the lowest note between D and C# of the track's octave, as keys voice a
+ninth or a thirteenth; `Spread(ms)` sets the time between strings (12 ms).
 
 ### Sections, tracks and placements
 
