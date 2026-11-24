@@ -14,4 +14,10 @@ public enum Voicing
 	/// keys, not across strings. With no spread, a stroke sounds as a block chord.
 	/// </summary>
 	Close,
+	/// <summary>
+	/// As keys play over a bass that has the root: the chord without its root, and without its fifth where four notes
+	/// are left, moved by octaves until its lowest note is from D to C# of the track's octave, so one chord leads to the
+	/// next.
+	/// </summary>
+	Rootless,
 }

@@ -123,6 +123,24 @@ public sealed class Strum : Part
 		return [.. intervals.Select(interval => bass + interval)];
 	}
 
+	/// <summary>
+	/// The MIDI notes of a chord in <see cref="Music.Voicing.Rootless"/>: its intervals above its root less the root, and
+	/// less a perfect fifth where four would be left, moved by octaves until the lowest is from D to C# of
+	/// <paramref name="octave"/>.
+	/// </summary>
+	internal static int[] Rootless(int root, int[] intervals, int octave)
+	{
+		var kept = intervals.Where(interval => interval != 0).ToList();
+		if (kept.Count >= 4)
+			kept.Remove(7);
+		if (kept.Count == 0)
+			kept.Add(0);
+		var low = 12 * (octave + 1) + 2;
+		var lowest = 12 * (octave + 1) + root + kept[0];
+		var shift = 12 * (int)Math.Floor((low + 11 - lowest) / 12.0);
+		return [.. kept.Select(interval => 12 * (octave + 1) + root + interval + shift)];
+	}
+
 	private static int Mod12(int x) => ((x % 12) + 12) % 12;
 
 	internal sealed class Parsed(Strum strum, int lengthTicks, (int Tick, char Stroke)[] strokes) : ParsedPart(lengthTicks)
@@ -142,9 +160,12 @@ public sealed class Strum : Part
 				var end = Math.Min(limit, i + 1 < strokes.Length ? context.Swung(offset + strokes[i + 1].Tick) : offset + LengthTicks);
 				tick = context.Swung(tick);
 				var chord = context.ChordAt(tick);
-				var voiced = strum._voicing == Music.Voicing.Close
-					? Close(chord.RootClass(context.Scale), chord.Intervals(context.Scale), context.TrackOctave)
-					: Voice(chord.RootClass(context.Scale), chord.Intervals(context.Scale), strum._voicing);
+				var voiced = strum._voicing switch
+				{
+					Music.Voicing.Close => Close(chord.RootClass(context.Scale), chord.Intervals(context.Scale), context.TrackOctave),
+					Music.Voicing.Rootless => Rootless(chord.RootClass(context.Scale), chord.Intervals(context.Scale), context.TrackOctave),
+					_ => Voice(chord.RootClass(context.Scale), chord.Intervals(context.Scale), strum._voicing),
+				};
 				var up = stroke is 'U' or 'u';
 				var velocity = stroke switch { 'D' => 0.8f, 'U' => 0.7f, 'x' => 0.5f, _ => 0.5f };
 				var count = up ? Math.Min(4, voiced.Length) : voiced.Length;
