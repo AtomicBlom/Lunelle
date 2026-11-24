@@ -524,6 +524,7 @@ lunelle-studio <project.csproj | its folder> [--extension <csproj>]
                                                  the workbench over that project, with its extension
 lunelle-studio new <folder>                      a project to start from (HelloSynth's, renamed), opened
 lunelle-studio <folder> --data                   the folder's music files alone, nothing compiled
+lunelle-studio new <folder> --data               a project of music files alone to start from, opened
 ```
 
 **Music files alone.** A folder with no `.csproj` in it, or any folder with `--data`, opens with no C#: it is read as a
