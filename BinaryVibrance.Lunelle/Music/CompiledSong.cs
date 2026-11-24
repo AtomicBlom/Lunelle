@@ -22,6 +22,9 @@ internal sealed class CompiledSong
 	public int TicksPerBeat { get; private init; }
 	public CompiledTrack[] Tracks { get; private init; } = [];
 	public CueBase[] Cues { get; private init; } = [];
+	// The rolls' slots (the first in Cues) and each one's seed, from its name: drawn by the sequencer at each section start
+	public int[] RollSlots { get; private init; } = [];
+	public uint[] RollSeeds { get; private init; } = [];
 	public CompiledSection[] Sections { get; private init; } = [];
 	public int LatchCount { get; private init; }
 	public int MostPlacements { get; private init; }
@@ -62,8 +65,10 @@ internal sealed class CompiledSong
 		if (song.Meter.Beats <= 0 || song.Meter.Unit <= 0)
 			throw new InvalidOperationException($"Song '{song.Name}' has a meter of {song.Meter}: both its numbers are more than 0.");
 		var ticksPerBar = song.Meter.TicksPerBar;
-		var cues = song.Cues.ToArray();
+		CueBase[] cues = [.. song.Rolls, .. song.Cues];
 		int Slot(CueBase cue) => Array.IndexOf(cues, cue);
+		// A roll's comparisons are exact, so it has no latch
+		int Latch(Cue cue, ref int latches) => song.IsRoll(cue) ? -1 : latches++;
 
 		var tracks = new CompiledTrack[song.Tracks.Count];
 		for (var t = 0; t < tracks.Length; t++)
@@ -120,7 +125,7 @@ internal sealed class CompiledSong
 				var program = new List<ConditionOp>();
 				if (placement.Condition is { } condition)
 				{
-					Emit(condition, program, Slot, ref latches);
+					Emit(condition, program, Slot, Latch, ref latches);
 					if (Depth(program) > ConditionDepth)
 						throw new InvalidOperationException(
 							$"Song '{song.Name}': the condition on '{placement.Name}' nests deeper than {ConditionDepth}: write it flatter.");
@@ -153,7 +158,7 @@ internal sealed class CompiledSong
 				var program = new List<ConditionOp>();
 				if (section.Exits[e].When is { } when)
 				{
-					Emit(when, program, Slot, ref latches);
+					Emit(when, program, Slot, Latch, ref latches);
 					if (Depth(program) > ConditionDepth)
 						throw new InvalidOperationException(
 							$"Song '{song.Name}': the condition on exit {e + 1} of '{section.Name}' nests deeper than {ConditionDepth}: write it flatter.");
@@ -183,6 +188,8 @@ internal sealed class CompiledSong
 			TicksPerBeat = ticksPerBar / song.Meter.Beats,
 			Tracks = tracks,
 			Cues = cues,
+			RollSlots = [.. Enumerable.Range(0, song.Rolls.Count)],
+			RollSeeds = [.. song.Rolls.Select(r => Seed(r.Name))],
 			Sections = sections,
 			LatchCount = latches,
 			MostPlacements = most,
@@ -199,16 +206,19 @@ internal sealed class CompiledSong
 		};
 	}
 
-	// A condition as postfix steps; Above and Below each get a latch for the 0.05 margin
-	private static void Emit(Condition condition, List<ConditionOp> program, Func<CueBase, int> slot, ref int latches)
+	// A latch for a level cue's comparison, or -1 for one compared exactly (a roll's)
+	private delegate int LatchOf(Cue cue, ref int latches);
+
+	// A condition as postfix steps; Above and Below each get a latch for the 0.05 margin, but a roll's
+	private static void Emit(Condition condition, List<ConditionOp> program, Func<CueBase, int> slot, LatchOf latch, ref int latches)
 	{
 		switch (condition)
 		{
 			case AboveCondition above:
-				program.Add(new ConditionOp { Kind = ConditionOpKind.Above, Slot = slot(above.Cue), Value = above.Level, Latch = latches++ });
+				program.Add(new ConditionOp { Kind = ConditionOpKind.Above, Slot = slot(above.Cue), Value = above.Level, Latch = latch(above.Cue, ref latches) });
 				break;
 			case BelowCondition below:
-				program.Add(new ConditionOp { Kind = ConditionOpKind.Below, Slot = slot(below.Cue), Value = below.Level, Latch = latches++ });
+				program.Add(new ConditionOp { Kind = ConditionOpKind.Below, Slot = slot(below.Cue), Value = below.Level, Latch = latch(below.Cue, ref latches) });
 				break;
 			case IsCondition @is:
 				program.Add(new ConditionOp { Kind = ConditionOpKind.Is, Slot = slot(@is.Cue), Value = @is.Value });
@@ -226,17 +236,17 @@ internal sealed class CompiledSong
 				});
 				break;
 			case AndCondition and:
-				Emit(and.A, program, slot, ref latches);
-				Emit(and.B, program, slot, ref latches);
+				Emit(and.A, program, slot, latch, ref latches);
+				Emit(and.B, program, slot, latch, ref latches);
 				program.Add(new ConditionOp { Kind = ConditionOpKind.And });
 				break;
 			case OrCondition or:
-				Emit(or.A, program, slot, ref latches);
-				Emit(or.B, program, slot, ref latches);
+				Emit(or.A, program, slot, latch, ref latches);
+				Emit(or.B, program, slot, latch, ref latches);
 				program.Add(new ConditionOp { Kind = ConditionOpKind.Or });
 				break;
 			case NotCondition not:
-				Emit(not.A, program, slot, ref latches);
+				Emit(not.A, program, slot, latch, ref latches);
 				program.Add(new ConditionOp { Kind = ConditionOpKind.Not });
 				break;
 		}
@@ -244,7 +254,7 @@ internal sealed class CompiledSong
 			throw new InvalidOperationException("A condition has more than 64 steps.");
 	}
 
-	// A stable hash of a track's name (FNV-1a), so its humanising is the same every time
+	// A stable hash of a name (FNV-1a): a track's, so its humanising is the same every time; a roll's, so two rolls draw apart
 	private static uint Seed(string name)
 	{
 		var h = 2166136261u;

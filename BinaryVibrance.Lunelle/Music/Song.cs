@@ -26,6 +26,7 @@ public sealed class Song(string name)
 	private readonly List<SongGroup> _groups = [];
 	private readonly List<SongTrack> _tracks = [];
 	private readonly List<Section> _sections = [];
+	private readonly List<Cue> _rolls = [];
 
 	// As many as a chip has instruments
 	internal const int MaxTracks = 64;
@@ -136,7 +137,35 @@ public sealed class Song(string name)
 	/// <summary>Its groups, in the order made.</summary>
 	public IReadOnlyList<SongGroup> Groups => _groups;
 
-	/// <summary>Every cue a condition (a part's or an exit's), a level or a macro names, each once, in the order first named.</summary>
+	/// <summary>Its rolls (<see cref="Roll"/>), in the order made.</summary>
+	public IReadOnlyList<Cue> Rolls => _rolls;
+
+	/// <summary>Whether <paramref name="cue"/> is one of its rolls, drawn by the sequencer rather than told by the game.</summary>
+	public bool IsRoll(CueBase cue) => cue is Cue level && _rolls.Contains(level);
+
+	/// <summary>
+	/// A roll: a level from 0 to 1 the song draws for itself at the start of every section, held until the next, so a part
+	/// can be picked afresh each time round: <c>fill.Below(0.33f)</c> for one fill, <c>fill.Above(0.33f) &amp; fill.Below(0.66f)</c>
+	/// for the next. Unlike a cue's, its comparisons are exact, with no margin: <c>Above(x)</c> holds at x or more and
+	/// <c>Below(x)</c> below x, so slices that meet never both hold, nor both miss. What it draws comes from the seed the
+	/// song was prepared with (<see cref="MusicPlayer.Prepare"/>), the roll's name and how many sections have started.
+	/// </summary>
+	/// <exception cref="ArgumentException">The song already has a roll of that name.</exception>
+	public Cue Roll(string name)
+	{
+		CheckOpen();
+		ArgumentException.ThrowIfNullOrWhiteSpace(name);
+		if (_rolls.Exists(r => r.Name == name))
+			throw new ArgumentException($"Song '{Name}' already has a roll named '{name}'.", nameof(name));
+		var roll = new Cue(name);
+		_rolls.Add(roll);
+		return roll;
+	}
+
+	/// <summary>
+	/// Every cue a condition (a part's or an exit's), a level or a macro names, each once, in the order first named: the
+	/// cues the game tells it, so not its <see cref="Rolls"/>, which it draws for itself.
+	/// </summary>
 	public IReadOnlyList<CueBase> Cues
 	{
 		get
@@ -144,7 +173,7 @@ public sealed class Song(string name)
 			var cues = new List<CueBase>();
 			void Add(CueBase cue)
 			{
-				if (!cues.Contains(cue))
+				if (!cues.Contains(cue) && !IsRoll(cue))
 					cues.Add(cue);
 			}
 			foreach (var track in _tracks)

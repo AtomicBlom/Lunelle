@@ -336,6 +336,23 @@ and every song uses those; one a song doesn't use is remembered for the next. Co
 `cue.Below(x)`, `choice.Is(value)`, combined with `&`, `|` and `!`. **`Above(x)` turns true at x and false again only
 below x − 0.05** (`Below` mirrors it), so a part doesn't flap while a cue hovers.
 
+**Rolls.** A song can also draw a level for itself: `var fill = song.Roll("fill")` is a `Cue` the sequencer sets, from
+0 to 1, at the start of every section, held until the next, so a part can be picked afresh each time round:
+
+```csharp
+a.Play(drums, fillA).When(fill.Below(0.33f));
+a.Play(drums, fillB).When(fill.Above(0.33f) & fill.Below(0.66f));
+a.Play(drums, fillC).When(fill.Above(0.66f));
+```
+
+Slices of any width weight the picks. A roll's comparisons are exact, with no margin, since it jumps rather than hovers
+(a latch would keep the last pick on beside the new one): `Above(x)` holds at x or more and `Below(x)` below x, so
+slices that meet never both hold, nor both miss. It is drawn on the audio thread, as the section starts, before its
+first bar line asks its parts, which a game setting a cue could only do a section late. What it draws comes from the
+seed the song is prepared with (`player.Prepare(song, seed: worldSeed)`, 0 if none), the roll's name and how many
+sections have started, so the same seed makes the same picks, a jump draws anew, and a swap keeps the section's.
+`player.Get(fill)` reads the last draw; a roll isn't in `song.Cues`, the cues the game tells it (`song.Rolls` lists them).
+
 **`OnBar()` against `OnPhrase()`.** An on-bar placement (the default) comes and goes at any bar line as its condition
 changes. An on-phrase one is asked only where its part starts over, and once in plays that pass out: a four-bar melody
 never starts halfway.
@@ -662,6 +679,7 @@ Its pieces:
 | `tempo`, `meter`, `scale`, `voices` | The song's settings, defaults left out: `"scale": "F# minor"` |
 | `effects` | The space, echo and master sends' effects, if not the defaults |
 | `groups` | `{ "name", "effects": [{ "fx": "compressor", "thresholdDb": -18, "ratio": 3 }] }`: an effect is one of `Fx`'s factories, its arguments by their parameter names |
+| `rolls` | `["fill"]`: the song's rolls, named in conditions, levels and macros as cues are, and never a cue's name |
 | `tracks` | `{ "name", "patch" or "kit", "group", "octave", "level", "pan", "humanise": { "ms", "velocity" }, "swing": { "ratio", "step" }, "macros": [{ "macro", "follow", "from", "to" } or { "macro", "set" }] }` |
 | `sections` | `{ "name", "about", "bars", "chords", "parts": [...], "sweeps": [{ "track", "macro", "from", "to" }], "exits": [{ "when": "intensity > 0.7", "then": "open" }, { "then": "cruise" }] }`: the exits tried in order as it ends, the last, with no `when`, always |
 | a part | `{ "track", "name", ` a line `"line": "eighths", "notes", "overChords", "octave"`, a beat `"beat", "rows": { "kick": "x..." }`, a strum `"strum", "notes", "voicing", "spread"`, or code `"part": { "code": "Name" }`; then `"when"`, `"level"` (a cue), `"onPhrase"`, `"endWith"` (a part) `}`, or a whole placement as code `{ "track", "code": "Name" }` |

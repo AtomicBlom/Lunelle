@@ -45,6 +45,7 @@ internal sealed class SongState
 	}
 
 	public CompiledSong Song { get; }
+	public uint Seed { get; init; }              // what the song's rolls are drawn from
 	public int[] SectionMap { get; set; } = [];   // a swap: each old section's index here, by name, or 0
 
 	// Per placement of the section playing

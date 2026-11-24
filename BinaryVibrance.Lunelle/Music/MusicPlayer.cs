@@ -225,11 +225,12 @@ public sealed class MusicPlayer : IDisposable
 	/// Makes <paramref name="song"/> ready to play, in <paramref name="scale"/> or its own: compiles it and makes its chip's
 	/// voices and effects, the costly part of starting a song. It touches nothing of the player's or the engine's, so it may
 	/// run on any thread, as a game does it while a level loads; hand the result to <see cref="Play(PreparedSong, float)"/>.
+	/// The song's rolls (<see cref="Song.Roll"/>) are drawn from <paramref name="seed"/>: the same seed, the same picks.
 	/// </summary>
-	public PreparedSong Prepare(Song song, Scale? scale = null)
+	public PreparedSong Prepare(Song song, Scale? scale = null, uint seed = 0)
 	{
 		ArgumentNullException.ThrowIfNull(song);
-		var state = new SongState(CompiledSong.Compile(song, scale ?? song.Scale));
+		var state = new SongState(CompiledSong.Compile(song, scale ?? song.Scale)) { Seed = seed };
 		state.PrepareCore(_audio.SampleRate);
 		return new PreparedSong(state);
 	}
@@ -278,7 +279,7 @@ public sealed class MusicPlayer : IDisposable
 			return;
 		}
 		var current = Current!;
-		var state = new SongState(CompiledSong.Compile(song, current.Song.Scale));
+		var state = new SongState(CompiledSong.Compile(song, current.Song.Scale)) { Seed = current.Seed };
 		var map = new int[current.Song.Sections.Length];
 		for (var s = 0; s < map.Length; s++)
 			map[s] = Math.Max(0, Array.FindIndex(state.Song.Sections, n => n.Name == current.Song.Sections[s].Name));
@@ -330,7 +331,7 @@ public sealed class MusicPlayer : IDisposable
 		Write(cue, Cue<T>.ToValue(value));
 	}
 
-	/// <summary>A level cue's value as last told, or its initial value.</summary>
+	/// <summary>A level cue's value as last told, or its initial value; a roll's as last drawn, up to the player's lead ahead of what is heard.</summary>
 	public float Get(Cue cue) => CueValue(cue);
 
 	/// <summary>Any cue's value as last told, or its initial value: a choice's as its number (<see cref="CueBase.OptionValue"/>).</summary>
@@ -350,7 +351,13 @@ public sealed class MusicPlayer : IDisposable
 		Write(cue, value);
 	}
 
-	private float CueValue(CueBase cue) => _cues.TryGetValue(cue, out var value) ? value : cue.InitialValue;
+	private float CueValue(CueBase cue)
+	{
+		// A roll is the song's, drawn on the audio thread: read where it was drawn
+		if (_source?.State is { } playing && playing.Song.Song.IsRoll(cue))
+			return Volatile.Read(ref playing.Cues[playing.Song.SlotOf(cue)]);
+		return _cues.TryGetValue(cue, out var value) ? value : cue.InitialValue;
+	}
 
 	private void Write(CueBase cue, float value)
 	{

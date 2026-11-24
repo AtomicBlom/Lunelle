@@ -117,6 +117,8 @@ internal sealed class MusicSource : AudioSource
 		_ticksPerFrame = TicksPerFrame(_state.Song);
 		for (var slot = 0; slot < _state.Levels.Length; slot++)
 			_state.Levels[slot] = -1f;
+		// The first section starts here, not through Begin
+		Roll(_state);
 	}
 
 	private double TicksPerFrame(CompiledSong song) => song.Tempo * Ticks.PerBeat / (60.0 * _rate);
@@ -308,6 +310,26 @@ internal sealed class MusicSource : AudioSource
 		Array.Clear(_state.NoteCount);
 		SnapLevels();
 		_sectionStarts++;
+		Roll(_state);
+	}
+
+	// The song's rolls drawn for the section starting: from the seed it was prepared with, each roll's name and the
+	// sections started so far, so the same seed plays the same picks. Each lands strictly inside 0 to 1, on a 65536th's
+	// half-step, so it never sits exactly on a threshold a person would write
+	private void Roll(SongState state)
+	{
+		var song = state.Song;
+		for (var r = 0; r < song.RollSlots.Length; r++)
+		{
+			var h = state.Seed ^ song.RollSeeds[r];
+			h = (h ^ (uint)_sectionStarts) * 0x9E3779B1u;
+			h ^= h >> 16;
+			h *= 0x85EBCA6Bu;
+			h ^= h >> 13;
+			h *= 0xC2B2AE35u;
+			h ^= h >> 16;
+			Volatile.Write(ref state.Cues[song.RollSlots[r]], ((h >> 16) + 0.5f) / 65536f);
+		}
 	}
 
 	private void BarLine(int f, long frame)
@@ -389,6 +411,17 @@ internal sealed class MusicSource : AudioSource
 		var tick = barTick < song.Sections[section].LengthTicks ? barTick : 0;
 		for (var slot = 0; slot < swap.Levels.Length; slot++)
 			swap.Levels[slot] = -1f;
+		// The section carries on, so its picks do: each roll the new song shares by name keeps what was drawn, and a new one
+		// is drawn as it would have been
+		Roll(swap);
+		var old = _state.Song;
+		for (var r = 0; r < song.RollSlots.Length; r++)
+		{
+			var name = song.Cues[song.RollSlots[r]].Name;
+			for (var o = 0; o < old.RollSlots.Length; o++)
+				if (old.Cues[old.RollSlots[o]].Name == name)
+					Volatile.Write(ref swap.Cues[song.RollSlots[r]], Volatile.Read(ref _state.Cues[old.RollSlots[o]]));
+		}
 		_state = swap;
 		_publishedState = swap;
 		_section = section;
@@ -413,6 +446,13 @@ internal sealed class MusicSource : AudioSource
 		{
 			switch (op.Kind)
 			{
+				// A roll's (no latch) compared exactly: at or above, or below, so slices that meet split it
+				case ConditionOpKind.Above when op.Latch < 0:
+					_stack[top++] = Volatile.Read(ref cues[op.Slot]) >= op.Value;
+					break;
+				case ConditionOpKind.Below when op.Latch < 0:
+					_stack[top++] = Volatile.Read(ref cues[op.Slot]) < op.Value;
+					break;
 				case ConditionOpKind.Above:
 					{
 						var value = Volatile.Read(ref cues[op.Slot]);

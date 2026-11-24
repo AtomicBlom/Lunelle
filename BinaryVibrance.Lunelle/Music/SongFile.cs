@@ -17,6 +17,7 @@ namespace BinaryVibrance.Lunelle.Music;
 ///   "tempo": 108,
 ///   "scale": "G major",
 ///   "groups": [{ "name": "wide", "effects": [{ "fx": "chorus", "mix": 0.4 }] }],
+///   "rolls": ["fill"],
 ///   "tracks": [
 ///     { "name": "drums", "kit": "general", "level": -9, "humanise": { "ms": 6, "velocity": 0.1 } },
 ///     { "name": "keys", "patch": "electric-piano", "group": "wide", "level": -5 }
@@ -39,7 +40,8 @@ namespace BinaryVibrance.Lunelle.Music;
 /// (<c>"part": { "code": "Name" }</c>); a whole placement can be code (<c>"code": "Name"</c>). Conditions are
 /// <see cref="ConditionText"/>'s. As a section ends the song goes where the first of its <c>"exits"</c> whose condition
 /// holds says, the last of them with no <c>"when"</c> where it has one, or plays it again where none holds
-/// (<see cref="Section.Exits"/>); <c>"hooks": ["OnBuilt"]</c> hands the built song to code of the game's own. A
+/// (<see cref="Section.Exits"/>). <c>"rolls"</c> names the song's rolls (<see cref="Song.Roll"/>), drawn afresh as each
+/// section starts and named in conditions as cues are (<c>"fill &lt; 0.33"</c>); <c>"hooks": ["OnBuilt"]</c> hands the built song to code of the game's own. A
 /// <c>loom-song/1</c> file, whose song-wide <c>"order"</c> or <c>"conduct"</c> chose the next section, is refused, naming
 /// how to move it.
 /// </summary>
@@ -103,6 +105,8 @@ public static class SongFile
 			file["voices"] = song.Voices;
 		if (song.Groups.Count > 0)
 			file["groups"] = new JsonArray([.. song.Groups.Select(g => new JsonObject { ["name"] = g.Name, ["effects"] = names.GroupEffects(g) ?? [] })]);
+		if (song.Rolls.Count > 0)
+			file["rolls"] = new JsonArray([.. song.Rolls.Select(r => (JsonNode)r.Name)]);
 		file["tracks"] = new JsonArray([.. song.Tracks.Select(t => TrackJson(t, names))]);
 		file["sections"] = new JsonArray([.. song.Sections.Select(s => SectionJson(s, names))]);
 		return file;
@@ -302,7 +306,18 @@ public static class SongFile
 			groups[groupName] = song.Group(groupName, [.. PatchFile.Array(group, "effects").Select(e => EffectText.Make(e, name))]);
 		}
 
-		CueBase Cue(string cueName) => bindings.Cue(cueName) ?? throw Error($"no cue is named \"{cueName}\"");
+		var rolls = new Dictionary<string, Cue>(StringComparer.Ordinal);
+		foreach (var roll in PatchFile.Array(root, "rolls"))
+		{
+			var rollName = roll.GetString() ?? throw Error("a roll is a name (\"fill\")");
+			if (bindings.Cue(rollName) is not null)
+				throw Error($"the roll '{rollName}' has a cue's name: name it apart, so a condition says which it means");
+			if (rolls.ContainsKey(rollName))
+				throw Error($"two rolls are named '{rollName}'");
+			rolls[rollName] = song.Roll(rollName);
+		}
+		CueBase? Named(string cueName) => rolls.TryGetValue(cueName, out var roll) ? roll : bindings.Cue(cueName);
+		CueBase Cue(string cueName) => Named(cueName) ?? throw Error($"no cue or roll is named \"{cueName}\"");
 		Macro MacroOf(JsonElement element) => element.ValueKind == JsonValueKind.Number
 			? new Macro(element.GetInt32())
 			: bindings.Macro(element.GetString() ?? "") ?? throw Error($"no macro is named \"{element}\"");
@@ -418,7 +433,7 @@ public static class SongFile
 				}
 				var placement = section.Play(track, PartOf(part, where));
 				if (PatchFile.String(part, "when") is { } when)
-					placement.When(ConditionText.Parse(when, bindings.Cue));
+					placement.When(ConditionText.Parse(when, Named));
 				if (PatchFile.String(part, "level") is { } levelCue)
 					placement.Level(Cue(levelCue) as Cue ?? throw Error($"{where}: its level follows '{levelCue}', which isn't a level"));
 				if (PatchFile.Bool(part, "onPhrase"))
@@ -443,7 +458,7 @@ public static class SongFile
 			{
 				var to = SectionNamed(PatchFile.String(exit, "then") ?? throw Error($"an exit of '{section.Name}' has no \"then\""));
 				if (PatchFile.String(exit, "when") is { } when)
-					section.Exit(to, ConditionText.Parse(when, bindings.Cue));
+					section.Exit(to, ConditionText.Parse(when, Named));
 				else
 					section.Then(to);
 			}

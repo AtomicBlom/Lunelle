@@ -82,6 +82,7 @@ public class MusicGeneratorTests
 		  "tempo": 118,
 		  "scale": "F# minor",
 		  "groups": [{ "name": "amp", "effects": [{ "fx": "distortion", "driveDb": 18, "toneHz": 3500, "cabinet": "fourByTwelve" }] }],
+		  "rolls": ["fill"],
 		  "tracks": [
 		    { "name": "drums", "kit": "general", "level": -6, "humanise": { "ms": 4, "velocity": 0.1 } },
 		    { "name": "lead", "patch": "pluck", "group": "amp", "octave": 5, "pan": -0.2, "macros": [{ "macro": "bright", "follow": "intensity", "from": 0.2, "to": 0.9 }] }
@@ -99,7 +100,8 @@ public class MusicGeneratorTests
 		    {
 		      "name": "chorus", "bars": 2, "chords": "III | VII",
 		      "parts": [
-		        { "track": "lead", "strum": "eighths", "notes": "D.DU .UDU", "voicing": "triad", "when": "(intensity < 0.2 or mood is Calm)" }
+		        { "track": "lead", "strum": "eighths", "notes": "D.DU .UDU", "voicing": "triad", "when": "(intensity < 0.2 or mood is Calm)" },
+		        { "track": "lead", "name": "half the time", "line": "quarters", "notes": "1 . 5 .", "when": "fill < 0.5" }
 		      ],
 		      "exits": [{ "when": "pass < 2", "then": "chorus" }, { "then": "verse" }]
 		    }
@@ -174,6 +176,8 @@ public class MusicGeneratorTests
 		songCode.ShouldContain("namespace Tunes.Songs;");
 		songCode.ShouldContain("verse.Exit(chorus, Cues.Intensity.Above(0.7f) & Cues.Mood.Is(global::Tunes.Mood.Calm));");
 		songCode.ShouldContain("verse.Then(verse);");
+		songCode.ShouldContain("var fill = song.Roll(\"fill\");");
+		songCode.ShouldContain(".When(fill.Below(0.5f))");
 		songCode.ShouldContain("chorus.Exit(chorus, global::BinaryVibrance.Lunelle.Music.Pass.Below(2));");
 		songCode.ShouldContain(".When(Cues.Intensity.Above(0.4f) & !Cues.Mood.Is(global::Tunes.Mood.Dark))");
 		songCode.ShouldContain("Fx.Distortion(driveDb: 18f, toneHz: 3500f, cabinet: global::BinaryVibrance.Sirrow.Effects.Cabinet.FourByTwelve)");
@@ -199,6 +203,10 @@ public class MusicGeneratorTests
 		var names = new SongNames { Patch = p => p.Name, Macro = m => m.Id == 0 ? "bright" : null };
 		SongFile.Write(generated, names).ShouldBe(SongFile.Write(loaded, names));
 		generated.Sections[0].Placements.Count.ShouldBe(3);
+		generated.Rolls.ShouldHaveSingleItem().Name.ShouldBe("fill");
+		loaded.Rolls.ShouldHaveSingleItem().Name.ShouldBe("fill");
+		// A roll is the song's own, so not among the cues the game must tell it
+		generated.Cues.Select(c => c.Name).ShouldNotContain("fill");
 	}
 
 	[Test]

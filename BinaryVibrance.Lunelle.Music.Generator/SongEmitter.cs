@@ -79,6 +79,21 @@ internal sealed class SongEmitter(MusicContext context)
 				body.Add($"song.{property} = [{string.Join(", ", value.Items.Select(context.Effect))}];");
 			}
 
+		var rolls = new Dictionary<string, string>();
+		foreach (var roll in root["rolls"]?.Items ?? [])
+		{
+			var rollName = roll.Str ?? throw new JsonError("a roll is a name (\"fill\")", roll.Span);
+			if (rolls.ContainsKey(rollName))
+				throw new JsonError($"two rolls are named '{rollName}'", roll.Span);
+			if (context.FindsCue(rollName))
+				throw new JsonError($"the roll '{rollName}' has the name of a cue in {context.Options.Cues}: name it apart, so a condition says which it means", roll.Span);
+			var v = Var(rollName, "Roll");
+			rolls[rollName] = v;
+			body.Add($"var {v} = song.Roll({Code.Quote(rollName)});");
+		}
+		_conditions.Rolls = rolls;
+		string CueRef(string cueName) => rolls.TryGetValue(cueName, out var v) ? v : context.Cue(cueName);
+
 		var groups = new Dictionary<string, string>();
 		foreach (var group in root["groups"]?.Items ?? [])
 		{
@@ -134,7 +149,7 @@ internal sealed class SongEmitter(MusicContext context)
 			{
 				var made = $"{v}.Macro({context.Macro(macro["macro"] ?? throw new JsonError("a macro names its \"macro\"", macro.Span))})";
 				if (macro["follow"]?.Str is { } follow)
-					macroLines.Add($"{made}.Follow({context.Cue(follow)}, {Code.F(macro["from"]?.Num ?? "0")}, {Code.F(macro["to"]?.Num ?? "1")});");
+					macroLines.Add($"{made}.Follow({CueRef(follow)}, {Code.F(macro["from"]?.Num ?? "0")}, {Code.F(macro["to"]?.Num ?? "1")});");
 				else
 					macroLines.Add($"{made}.Set({Code.F(macro["set"]?.Num ?? throw new JsonError("a macro follows a cue or is \"set\"", macro.Span))});");
 			}
@@ -180,7 +195,7 @@ internal sealed class SongEmitter(MusicContext context)
 				if (part["when"] is { } when)
 					play.Append($".When({_conditions.Placement(when)})");
 				if (part["level"]?.Str is { } levelCue)
-					play.Append($".Level({context.Cue(levelCue)})");
+					play.Append($".Level({CueRef(levelCue)})");
 				if (part["onPhrase"]?.True == true)
 					play.Append(".OnPhrase()");
 				if (part["endWith"] is JsonObj fill)
