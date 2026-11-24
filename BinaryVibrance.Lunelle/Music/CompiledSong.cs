@@ -22,6 +22,9 @@ internal sealed class CompiledSong
 	public int TicksPerBeat { get; private init; }
 	public CompiledTrack[] Tracks { get; private init; } = [];
 	public CueBase[] Cues { get; private init; } = [];
+	// The song's variations, the first in Cues (variation v is in slot v), each as the sequencer picks it
+	public CompiledVariation[] Variations { get; private init; } = [];
+	public int MostOptions { get; private init; }
 	public CompiledSection[] Sections { get; private init; } = [];
 	public int LatchCount { get; private init; }
 	public int MostPlacements { get; private init; }
@@ -62,7 +65,7 @@ internal sealed class CompiledSong
 		if (song.Meter.Beats <= 0 || song.Meter.Unit <= 0)
 			throw new InvalidOperationException($"Song '{song.Name}' has a meter of {song.Meter}: both its numbers are more than 0.");
 		var ticksPerBar = song.Meter.TicksPerBar;
-		var cues = song.Cues.ToArray();
+		CueBase[] cues = [.. song.Variations, .. song.Cues];
 		int Slot(CueBase cue) => Array.IndexOf(cues, cue);
 
 		var tracks = new CompiledTrack[song.Tracks.Count];
@@ -168,6 +171,7 @@ internal sealed class CompiledSong
 				Placements = placements,
 				Sweeps = [.. section.Sweeps.Select(w => (w.Track.Index, w.Macro.Id, w.From, w.To))],
 				Exits = exits,
+				Variations = NamedVariations(song, section),
 			};
 		}
 
@@ -183,6 +187,8 @@ internal sealed class CompiledSong
 			TicksPerBeat = ticksPerBar / song.Meter.Beats,
 			Tracks = tracks,
 			Cues = cues,
+			Variations = [.. song.Variations.Select(v => CompiledVariation.Of(v, Seed(v.Name)))],
+			MostOptions = song.Variations.Count == 0 ? 0 : song.Variations.Max(v => v.Options),
 			Sections = sections,
 			LatchCount = latches,
 			MostPlacements = most,
@@ -197,6 +203,25 @@ internal sealed class CompiledSong
 				EventCapacity = 64,
 			},
 		};
+	}
+
+	// The song's variations a section's parts' and exits' conditions name, by their index, each once
+	private static int[] NamedVariations(Song song, Section section)
+	{
+		var named = new List<int>();
+		void Add(Condition? condition)
+		{
+			if (condition is null)
+				return;
+			foreach (var cue in condition.Cues)
+				if (cue is Variation variation && song.Variations.ToList().IndexOf(variation) is >= 0 and var index && !named.Contains(index))
+					named.Add(index);
+		}
+		foreach (var placement in section.Placements)
+			Add(placement.Condition);
+		foreach (var exit in section.Exits)
+			Add(exit.When);
+		return [.. named];
 	}
 
 	// A condition as postfix steps; Above and Below each get a latch for the 0.05 margin
@@ -244,7 +269,7 @@ internal sealed class CompiledSong
 			throw new InvalidOperationException("A condition has more than 64 steps.");
 	}
 
-	// A stable hash of a track's name (FNV-1a), so its humanising is the same every time
+	// A stable hash of a name (FNV-1a): a track's, so its humanising is the same every time; a variation's, so two draw apart
 	private static uint Seed(string name)
 	{
 		var h = 2166136261u;

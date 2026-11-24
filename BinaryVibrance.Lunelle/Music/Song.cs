@@ -26,6 +26,7 @@ public sealed class Song(string name)
 	private readonly List<SongGroup> _groups = [];
 	private readonly List<SongTrack> _tracks = [];
 	private readonly List<Section> _sections = [];
+	private readonly List<Variation> _variations = [];
 
 	// As many as a chip has instruments
 	internal const int MaxTracks = 64;
@@ -136,7 +137,48 @@ public sealed class Song(string name)
 	/// <summary>Its groups, in the order made.</summary>
 	public IReadOnlyList<SongGroup> Groups => _groups;
 
-	/// <summary>Every cue a condition (a part's or an exit's), a level or a macro names, each once, in the order first named.</summary>
+	/// <summary>Its variations (<see cref="Variation(string, int, VariationPick, IReadOnlyList{float})"/>), in the order made.</summary>
+	public IReadOnlyList<Variation> Variations => _variations;
+
+	/// <summary>
+	/// A variation: one of <paramref name="options"/> options, numbered from 1, that the song picks for itself each time a
+	/// section that names it (in a part's condition or an exit's) starts, held until the next such start, so a part can
+	/// differ each time round: <c>fill.Is(1)</c> for one drum fill, <c>fill.Is(2)</c> for another. It picks
+	/// <paramref name="pick"/>'s way: at random, as likely as each option's <paramref name="weights"/> (all alike if none);
+	/// in turn; or shuffled, every option once in a random order and never the same twice running. Every section that names
+	/// it moves the same count on, so a cycle goes on from wherever it was last picked. The random draws come from the seed
+	/// the song was prepared with (<see cref="MusicPlayer.Prepare"/>), the variation's name and how many picks it has made,
+	/// so the same seed makes the same picks.
+	/// </summary>
+	/// <exception cref="ArgumentException">The song has a variation of that name already, it has fewer than 2 options, or
+	/// its weights don't fit: one each, none below 0, some above, and only for picking at random.</exception>
+	public Variation Variation(string name, int options, VariationPick pick = VariationPick.Random, IReadOnlyList<float>? weights = null)
+	{
+		CheckOpen();
+		ArgumentException.ThrowIfNullOrWhiteSpace(name);
+		if (_variations.Exists(v => v.Name == name))
+			throw new ArgumentException($"Song '{Name}' already has a variation named '{name}'.", nameof(name));
+		if (options < 2)
+			throw new ArgumentException($"Variation '{name}' has {options} option{(options == 1 ? "" : "s")}: a variation picks between 2 or more.", nameof(options));
+		weights ??= [];
+		if (weights.Count > 0)
+		{
+			if (pick != VariationPick.Random)
+				throw new ArgumentException($"Variation '{name}' is weighted, so it picks at random, not by {pick.ToString().ToLowerInvariant()}.", nameof(weights));
+			if (weights.Count != options)
+				throw new ArgumentException($"Variation '{name}' has {options} options and {weights.Count} weights: one each.", nameof(weights));
+			if (weights.Any(w => !(w >= 0f) || float.IsInfinity(w)) || !(weights.Sum() > 0f))
+				throw new ArgumentException($"Variation '{name}' has a weight below 0, or none above: each is 0 or more, and some more.", nameof(weights));
+		}
+		var variation = new Variation(name, options, pick, [.. weights]);
+		_variations.Add(variation);
+		return variation;
+	}
+
+	/// <summary>
+	/// Every cue a condition (a part's or an exit's), a level or a macro names, each once, in the order first named: the
+	/// cues the game tells it, so not its <see cref="Variations"/>, which it picks for itself.
+	/// </summary>
 	public IReadOnlyList<CueBase> Cues
 	{
 		get
@@ -144,7 +186,7 @@ public sealed class Song(string name)
 			var cues = new List<CueBase>();
 			void Add(CueBase cue)
 			{
-				if (!cues.Contains(cue))
+				if (!cues.Contains(cue) && cue is not global::BinaryVibrance.Lunelle.Music.Variation)
 					cues.Add(cue);
 			}
 			foreach (var track in _tracks)

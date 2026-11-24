@@ -17,6 +17,7 @@ namespace BinaryVibrance.Lunelle.Music;
 ///   "tempo": 108,
 ///   "scale": "G major",
 ///   "groups": [{ "name": "wide", "effects": [{ "fx": "chorus", "mix": 0.4 }] }],
+///   "variations": [{ "name": "fill", "options": 3, "pick": "shuffle" }],
 ///   "tracks": [
 ///     { "name": "drums", "kit": "general", "level": -9, "humanise": { "ms": 6, "velocity": 0.1 } },
 ///     { "name": "keys", "patch": "electric-piano", "group": "wide", "level": -5 }
@@ -39,7 +40,10 @@ namespace BinaryVibrance.Lunelle.Music;
 /// (<c>"part": { "code": "Name" }</c>); a whole placement can be code (<c>"code": "Name"</c>). Conditions are
 /// <see cref="ConditionText"/>'s. As a section ends the song goes where the first of its <c>"exits"</c> whose condition
 /// holds says, the last of them with no <c>"when"</c> where it has one, or plays it again where none holds
-/// (<see cref="Section.Exits"/>); <c>"hooks": ["OnBuilt"]</c> hands the built song to code of the game's own. A
+/// (<see cref="Section.Exits"/>). <c>"variations"</c> are the song's own picks between options (<see cref="Song.Variation"/>),
+/// picked afresh as a section that names them starts and named in conditions as choices are (<c>"fill is 2"</c>), each
+/// <c>{ "name", "options", "pick" }</c> (<c>"random"</c>, the default, <c>"cycle"</c> or <c>"shuffle"</c>) with
+/// <c>"weights"</c>, one an option, for picking at random; <c>"hooks": ["OnBuilt"]</c> hands the built song to code of the game's own. A
 /// <c>loom-song/1</c> file, whose song-wide <c>"order"</c> or <c>"conduct"</c> chose the next section, is refused, naming
 /// how to move it.
 /// </summary>
@@ -103,6 +107,8 @@ public static class SongFile
 			file["voices"] = song.Voices;
 		if (song.Groups.Count > 0)
 			file["groups"] = new JsonArray([.. song.Groups.Select(g => new JsonObject { ["name"] = g.Name, ["effects"] = names.GroupEffects(g) ?? [] })]);
+		if (song.Variations.Count > 0)
+			file["variations"] = new JsonArray([.. song.Variations.Select(VariationJson)]);
 		file["tracks"] = new JsonArray([.. song.Tracks.Select(t => TrackJson(t, names))]);
 		file["sections"] = new JsonArray([.. song.Sections.Select(s => SectionJson(s, names))]);
 		return file;
@@ -112,6 +118,17 @@ public static class SongFile
 		Array.Exists(Scales, s => s.Name == scale.Name && s.Make(scale.Root).Steps.SequenceEqual(scale.Steps))
 			? $"{NoteNames[(int)scale.Root]} {scale.Name}"
 			: new JsonObject { ["root"] = NoteNames[(int)scale.Root], ["name"] = scale.Name, ["steps"] = new JsonArray([.. scale.Steps.Select(s => (JsonNode)s)]) };
+
+	// A variation as a song file writes it: its pick and weights left out where they are the defaults
+	private static JsonObject VariationJson(Variation variation)
+	{
+		var json = new JsonObject { ["name"] = variation.Name, ["options"] = variation.Options };
+		if (variation.Pick != VariationPick.Random)
+			json["pick"] = variation.Pick.ToString().ToLowerInvariant();
+		if (variation.Weights.Count > 0)
+			json["weights"] = new JsonArray([.. variation.Weights.Select(w => (JsonNode)w)]);
+		return json;
+	}
 
 	private static JsonObject TrackJson(SongTrack track, SongNames names)
 	{
@@ -302,7 +319,43 @@ public static class SongFile
 			groups[groupName] = song.Group(groupName, [.. PatchFile.Array(group, "effects").Select(e => EffectText.Make(e, name))]);
 		}
 
-		CueBase Cue(string cueName) => bindings.Cue(cueName) ?? throw Error($"no cue is named \"{cueName}\"");
+		if (root.TryGetProperty("rolls", out _))
+			throw Error("\"rolls\" are \"variations\" now: { \"name\": \"fill\", \"options\": 3 } each, chosen in conditions with \"fill is 2\"");
+		var variations = new Dictionary<string, Variation>(StringComparer.Ordinal);
+		foreach (var element in PatchFile.Array(root, "variations"))
+		{
+			var variationName = PatchFile.String(element, "name") ?? throw Error("a variation has a \"name\"");
+			if (bindings.Cue(variationName) is not null)
+				throw Error($"the variation '{variationName}' has a cue's name: name it apart, so a condition says which it means");
+			if (variations.ContainsKey(variationName))
+				throw Error($"two variations are named '{variationName}'");
+			var options = PatchFile.Float(element, "options") is { } count && count == MathF.Floor(count)
+				? (int)count
+				: throw Error($"the variation '{variationName}' has a whole number of \"options\" (\"options\": 3)");
+			var pick = PatchFile.String(element, "pick") switch
+			{
+				null or "random" => VariationPick.Random,
+				"cycle" => VariationPick.Cycle,
+				"shuffle" => VariationPick.Shuffle,
+				var other => throw Error($"the variation '{variationName}' picks \"{other}\": \"random\", \"cycle\" or \"shuffle\""),
+			};
+			float[] weights = [.. PatchFile.Array(element, "weights").Select(w => w.ValueKind == JsonValueKind.Number
+				? w.GetSingle()
+				: throw Error($"the variation '{variationName}' has a weight that isn't a number"))];
+			try
+			{
+				variations[variationName] = song.Variation(variationName, options, pick, weights);
+			}
+			catch (ArgumentException e)
+			{
+				throw Error(e.Message.Split(" (Parameter")[0]);
+			}
+		}
+		CueBase? Named(string cueName) => variations.TryGetValue(cueName, out var variation) ? variation : bindings.Cue(cueName);
+		CueBase Cue(string cueName) => Named(cueName) ?? throw Error($"no cue or variation is named \"{cueName}\"");
+		string NotALevel(string cueName) => Named(cueName) is Variation
+			? $"'{cueName}' is a variation, which chooses parts: nothing follows it"
+			: $"'{cueName}' isn't a level";
 		Macro MacroOf(JsonElement element) => element.ValueKind == JsonValueKind.Number
 			? new Macro(element.GetInt32())
 			: bindings.Macro(element.GetString() ?? "") ?? throw Error($"no macro is named \"{element}\"");
@@ -334,7 +387,7 @@ public static class SongFile
 			{
 				var made = track.Macro(MacroOf(macro.GetProperty("macro")));
 				if (PatchFile.String(macro, "follow") is { } follow)
-					made.Follow(Cue(follow) as Cue ?? throw Error($"a macro follows '{follow}', which isn't a level"),
+					made.Follow(Cue(follow) as Cue ?? throw Error($"track '{trackName}': a macro follows {NotALevel(follow)}"),
 						PatchFile.Float(macro, "from") ?? 0f, PatchFile.Float(macro, "to") ?? 1f);
 				else
 					made.Set(PatchFile.Float(macro, "set") ?? throw Error($"track '{trackName}': a macro follows a cue or is \"set\""));
@@ -418,9 +471,9 @@ public static class SongFile
 				}
 				var placement = section.Play(track, PartOf(part, where));
 				if (PatchFile.String(part, "when") is { } when)
-					placement.When(ConditionText.Parse(when, bindings.Cue));
+					placement.When(ConditionText.Parse(when, Named));
 				if (PatchFile.String(part, "level") is { } levelCue)
-					placement.Level(Cue(levelCue) as Cue ?? throw Error($"{where}: its level follows '{levelCue}', which isn't a level"));
+					placement.Level(Cue(levelCue) as Cue ?? throw Error($"{where}: its level follows {NotALevel(levelCue)}"));
 				if (PatchFile.Bool(part, "onPhrase"))
 					placement.OnPhrase();
 				if (PatchFile.Object(part, "endWith") is { } fill)
@@ -443,7 +496,7 @@ public static class SongFile
 			{
 				var to = SectionNamed(PatchFile.String(exit, "then") ?? throw Error($"an exit of '{section.Name}' has no \"then\""));
 				if (PatchFile.String(exit, "when") is { } when)
-					section.Exit(to, ConditionText.Parse(when, bindings.Cue));
+					section.Exit(to, ConditionText.Parse(when, Named));
 				else
 					section.Then(to);
 			}

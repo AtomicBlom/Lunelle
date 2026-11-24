@@ -65,6 +65,9 @@ internal sealed class MusicContext(Compilation compilation, MusicOptions options
 			: null;
 	}
 
+	/// <summary>Whether the cue's class is found and has a member for <paramref name="name"/>.</summary>
+	public bool FindsCue(string name) => FindMember(Options.Cues, Code.Pascal(name)) is not null;
+
 	/// <summary>Whether the cue's class has a member for <paramref name="name"/>; true when the class itself isn't found.</summary>
 	public bool HasCue(string name) => FindType(Options.Cues) is null || FindMember(Options.Cues, Code.Pascal(name)) is not null;
 

@@ -146,6 +146,11 @@ manifest's folder, so a kit loads from disk, embedded resources or a package ali
 
 A missing file, a layer with no takes, or layers out of rising `upTo` order throw `InvalidDataException` naming the
 manifest and the piece.
+
+A piece can be a patch in place of layers, `{ "piece": "kick", "patch": "breaks-kick", "choke": 0 }`, synthesised as
+`FromPatches` makes it: `DrumKit.Load(read, path, patch)` finds each by name through `patch`, and a piece naming both a
+patch and layers, or a patch `patch` doesn't know, is refused. So a synthesised kit can be a file as a sampled one is.
+
 ## 3. The chip: `SynthChip`
 
 A `SynthChip` is an `AudioSource` that plays instruments on a pool of voices:
@@ -336,6 +341,33 @@ and every song uses those; one a song doesn't use is remembered for the next. Co
 `cue.Below(x)`, `choice.Is(value)`, combined with `&`, `|` and `!`. **`Above(x)` turns true at x and false again only
 below x − 0.05** (`Below` mirrors it), so a part doesn't flap while a cue hovers.
 
+**Variations.** A song can also pick for itself, between options, each time a section comes round: one drum fill this
+time, another the next. `song.Variation("fill", 3)` is a variation with options 1 to 3, and a part takes one with `Is`:
+
+```csharp
+var fill = song.Variation("fill", 3, VariationPick.Shuffle);
+a.Play(drums, fillA).When(fill.Is(1));
+a.Play(drums, fillB).When(fill.Is(2));
+a.Play(drums, fillC).When(fill.Is(3));
+```
+
+It picks as a section that names it (in a part's condition or an exit's) starts, before the section's first bar line asks
+its parts, and holds the pick until such a section starts again. How it picks:
+
+- `VariationPick.Random`, the default: each option as likely as its weight (`song.Variation("fill", 3, VariationPick.Random, [2f, 1f, 1f])`), all alike with none.
+- `VariationPick.Cycle`: in turn, 1, 2, 3, then 1 again.
+- `VariationPick.Shuffle`: every option once, in a random order, then a new order; never the same option twice running,
+  even from one order to the next.
+
+A song may have several variations at once (one for fills, one for a counter-melody). Every section that names a
+variation moves the same count on, so a cycle goes on wherever it was last picked ("the next fill, wherever"), and a
+section that doesn't name it leaves it be. The random picks come from the seed the song is prepared with
+(`player.Prepare(song, seed: worldSeed)`, 0 if none), the variation's name and how many picks it has made, so the same
+seed makes the same picks. A jump to a section that names it picks anew, as any start of it does; a swap keeps each
+variation's pick and count, matched by name. A variation only chooses parts and exits: no level or macro follows it.
+`player.Get(fill)` reads the option last picked; a variation isn't in `song.Cues`, the cues the game tells it
+(`song.Variations` lists them), and the game can't set one.
+
 **`OnBar()` against `OnPhrase()`.** An on-bar placement (the default) comes and goes at any bar line as its condition
 changes. An on-phrase one is asked only where its part starts over, and once in plays that pass out: a four-bar melody
 never starts halfway.
@@ -491,7 +523,17 @@ While a text field has the keys (the palette, the library's filter), the workben
 lunelle-studio <project.csproj | its folder> [--extension <csproj>]
                                                  the workbench over that project, with its extension
 lunelle-studio new <folder>                      a project to start from (HelloSynth's, renamed), opened
+lunelle-studio <folder> --data                   the folder's music files alone, nothing compiled
+lunelle-studio new <folder> --data               a project of music files alone to start from, opened
 ```
+
+**Music files alone.** A folder with no `.csproj` in it, or any folder with `--data`, opens with no C#: it is read as a
+`MusicFolder` (section 6), whose songs build from their files as a song with a file always does in the workbench
+(`FolderCatalog`), and read again 150 ms after any of its music files changes (`WorkbenchFolder`, in place of
+`WorkbenchProject`); the build pill says "read" and lists the files left out and each song's code, which plays as rests.
+Nothing is offered as C# (moving a part or a patch into code), and there is no extension, since one is C# to build. What
+it was doing is kept in the folder's own `.lunelle-studio/workbench.json`. Neither MSBuild nor Roslyn runs, which is what
+a host that has neither (a browser) needs; `FolderCatalog` is in `BinaryVibrance.LunelleStudio` for it.
 
 Under `dotnet run` the arguments follow `--`, as above. A game can keep a one-line script beside its music that runs it
 (RubberTrack's `studio.ps1`). It isn't a `dotnet tool`: it is a Kaldra app, with native libraries (SDL 3) and compiled
@@ -662,6 +704,7 @@ Its pieces:
 | `tempo`, `meter`, `scale`, `voices` | The song's settings, defaults left out: `"scale": "F# minor"` |
 | `effects` | The space, echo and master sends' effects, if not the defaults |
 | `groups` | `{ "name", "effects": [{ "fx": "compressor", "thresholdDb": -18, "ratio": 3 }] }`: an effect is one of `Fx`'s factories, its arguments by their parameter names |
+| `variations` | `[{ "name": "fill", "options": 3, "pick": "shuffle" }]`: the song's own picks between options, `"pick"` `"random"` (the default, with `"weights"`, one an option, if wanted), `"cycle"` or `"shuffle"`; chosen in conditions as `"fill is 2"`, never followed by a level or a macro, and never a cue's name |
 | `tracks` | `{ "name", "patch" or "kit", "group", "octave", "level", "pan", "humanise": { "ms", "velocity" }, "swing": { "ratio", "step" }, "macros": [{ "macro", "follow", "from", "to" } or { "macro", "set" }] }` |
 | `sections` | `{ "name", "about", "bars", "chords", "parts": [...], "sweeps": [{ "track", "macro", "from", "to" }], "exits": [{ "when": "intensity > 0.7", "then": "open" }, { "then": "cruise" }] }`: the exits tried in order as it ends, the last, with no `when`, always |
 | a part | `{ "track", "name", ` a line `"line": "eighths", "notes", "overChords", "octave"`, a beat `"beat", "rows": { "kick": "x..." }`, a strum `"strum", "notes", "voicing", "spread"`, or code `"part": { "code": "Name" }`; then `"when"`, `"level"` (a cue), `"onPhrase"`, `"endWith"` (a part) `}`, or a whole placement as code `{ "track", "code": "Name" }` |
@@ -697,6 +740,37 @@ The classes the names are found in can be others (`LunelleMusicPatches`, `Lunell
 `LunelleMusicMacros`, each made visible the same way). `MusicGeneratorTests` checks that the generated patch and song build
 what `PatchFile.Load` and `SongFile.Load` build from the same files; RubberTrack moved its 48 patches and ten songs onto
 the files and every render stayed bit-identical.
+
+### A project of files alone: `MusicFolder`
+
+A project needn't have code at all. `MusicFolder.Load(paths, read)` (or `FromDirectory`) takes every file it is given,
+each read through `read` by its path, so a folder, a zip or a browser's storage load alike:
+
+| File | Is |
+|---|---|
+| `*.song.json` | A song, named by its `"name"`, built by `SongFile.Load` each time it is asked for |
+| `*.patch.json` | A patch, named by its file (`electric-piano.patch.json` is "electric-piano"), as the generator names it |
+| `kit.json`, `*.kit.json` | A kit, sampled or of patches (section 2), named by its `"name"`, loaded once on first asking |
+| `lunelle-project.json` | At the root: what a project with code declares in C#, its cues and macros |
+
+```json
+{
+  "format": "lunelle-project/1",
+  "name": "HelloSynth",
+  "cues": [
+    { "name": "intensity", "initial": 0.3 },
+    { "name": "mood", "options": ["Calm", "Bright", "Dark"], "initial": "Calm" }
+  ],
+  "macros": { "bright": 0 }
+}
+```
+
+A cue with `"options"` is a `ChoiceCue`, a choice among names rather than an enum's values; option `i` is the value `i`,
+as an enum numbered from 0 is, so a song's `"mood is Dark"` plays the same against either. Its `Bindings` bind a song's
+names to the folder's own. What a song names as code has none: a part or a placement plays a `Rest` (a bar of nothing,
+on any track), a hook doesn't run, and `CodeIn(song)` lists each (`"part Riff"`, `"placement Counter"`, `"hook
+OnBuilt"`), so a song that is mostly data still plays, short of its code. A patch file that is code, or any file that
+can't be read, is left out and said in `Problems`, one line a file, and the rest load.
 
 ---
 

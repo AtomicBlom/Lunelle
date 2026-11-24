@@ -64,7 +64,20 @@ public sealed class DrumKit
 	/// <param name="read">Gives a file's bytes by its path: from disk, an embedded resource, a package.</param>
 	/// <param name="manifestPath">The manifest's path, as <paramref name="read"/> takes it.</param>
 	/// <exception cref="InvalidDataException">The manifest can't be read, or names a missing file, an empty layer, or layers out of rising order.</exception>
-	public static DrumKit Load(Func<string, byte[]> read, string manifestPath)
+	public static DrumKit Load(Func<string, byte[]> read, string manifestPath) => Load(read, manifestPath, null);
+
+	/// <summary>
+	/// A kit from its manifest, as <see cref="Load(Func{string, byte[]}, string)"/>, whose pieces may each name a patch
+	/// (<c>{ "piece": "kick", "patch": "breaks-kick", "choke": 0 }</c>) in place of layers: synthesised, played at note
+	/// 60, found by <paramref name="patch"/>.
+	/// </summary>
+	/// <param name="read">Gives a file's bytes by its path.</param>
+	/// <param name="manifestPath">The manifest's path, as <paramref name="read"/> takes it.</param>
+	/// <param name="patch">A patch by its name, or null when there is none of that name.</param>
+	/// <exception cref="InvalidDataException">
+	/// As the other overload; or a piece names a patch there is none of, or both a patch and layers.
+	/// </exception>
+	public static DrumKit Load(Func<string, byte[]> read, string manifestPath, Func<string, Patch?>? patch)
 	{
 		ArgumentNullException.ThrowIfNull(read);
 		ArgumentNullException.ThrowIfNull(manifestPath);
@@ -88,6 +101,18 @@ public sealed class DrumKit
 
 			if (string.IsNullOrWhiteSpace(entry.Piece))
 				throw new InvalidDataException($"The kit manifest '{manifestPath}' has a piece with no name.");
+			if (entry.Patch is { } patchName)
+			{
+				if (entry.Layers.Count > 0)
+					Fail($"it names a patch, '{patchName}', and layers too: a piece is one or the other.");
+				if (patch is null)
+					Fail($"it names a patch, '{patchName}', and the kit was loaded with no patches to find it among.");
+				var made = patch!(patchName);
+				if (made is null)
+					Fail($"no patch is named '{patchName}'.");
+				pieces.Add(new DrumKitPiece(new DrumPiece(entry.Piece), [], entry.GainDb, entry.Pan, entry.Choke, made));
+				continue;
+			}
 			if (entry.Layers.Count == 0)
 				Fail("it has no layers.");
 			var layers = new DrumLayer[entry.Layers.Count];

@@ -27,6 +27,8 @@ internal sealed class SongState
 		for (var c = 0; c < Cues.Length; c++)
 			Cues[c] = song.Cues[c].InitialValue;
 		Latches = new bool[Math.Max(1, song.LatchCount)];
+		VariationPicks = new int[song.Variations.Length];
+		ShuffleOrders = new int[song.Variations.Length * Math.Max(1, song.MostOptions)];
 		Levels = new float[ChipCore.GainSlotCount];
 		Instruments = new ChipInstrumentState[song.Tracks.Length];
 		for (var t = 0; t < Instruments.Length; t++)
@@ -45,6 +47,7 @@ internal sealed class SongState
 	}
 
 	public CompiledSong Song { get; }
+	public uint Seed { get; init; }              // what the song's variations are drawn from
 	public int[] SectionMap { get; set; } = [];   // a swap: each old section's index here, by name, or 0
 
 	// Per placement of the section playing
@@ -58,6 +61,8 @@ internal sealed class SongState
 	public PlacementState[][] Forced { get; }
 	public float[] Cues { get; }                  // by slot; the game writes them whole (Volatile)
 	public bool[] Latches { get; }
+	public int[] VariationPicks { get; }          // by variation, how many picks it has made
+	public int[] ShuffleOrders { get; }           // by variation, MostOptions each: a shuffle's order this round, options from 0
 	public float[] Levels { get; }                // by gain slot, eased
 	public ChipInstrumentState[] Instruments { get; }
 	public float[] Peaks { get; }                 // by track, the last block's, as the game reads them

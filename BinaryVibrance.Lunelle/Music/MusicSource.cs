@@ -117,6 +117,8 @@ internal sealed class MusicSource : AudioSource
 		_ticksPerFrame = TicksPerFrame(_state.Song);
 		for (var slot = 0; slot < _state.Levels.Length; slot++)
 			_state.Levels[slot] = -1f;
+		// The first section starts here, not through Begin
+		PickVariations(_state, _section);
 	}
 
 	private double TicksPerFrame(CompiledSong song) => song.Tempo * Ticks.PerBeat / (60.0 * _rate);
@@ -308,7 +310,85 @@ internal sealed class MusicSource : AudioSource
 		Array.Clear(_state.NoteCount);
 		SnapLevels();
 		_sectionStarts++;
+		PickVariations(_state, section);
 	}
+
+	// The variations the section starting names, each picking its next option before the section's parts are first asked
+	private static void PickVariations(SongState state, int section)
+	{
+		var sections = state.Song.Sections;
+		if (section < 0 || section >= sections.Length)
+			return;
+		foreach (var v in sections[section].Variations)
+			Pick(state, v);
+	}
+
+	// Variation v's next option, into its cue's slot (variation v is in slot v): at random by its weights, in turn, or the
+	// next of a shuffled round. Every draw is the seed the song was prepared with, the variation's name and how many picks
+	// it has made, so the same seed makes the same picks; nothing is allocated
+	private static void Pick(SongState state, int v)
+	{
+		var variation = state.Song.Variations[v];
+		var n = variation.Options;
+		var count = state.VariationPicks[v]++;
+		int option;
+		switch (variation.Pick)
+		{
+			case VariationPick.Cycle:
+				option = count % n;
+				break;
+			case VariationPick.Shuffle:
+				{
+					var order = state.ShuffleOrders.AsSpan(v * state.Song.MostOptions, n);
+					var at = count % n;
+					if (at == 0)
+						Shuffle(order, state.Seed ^ variation.Seed, (uint)(count / n), count > 0 ? order[n - 1] : -1);
+					option = order[at];
+					break;
+				}
+			default:
+				{
+					var draw = Unit(Mix(state.Seed ^ variation.Seed, (uint)count));
+					option = 0;
+					while (option < n - 1 && draw >= variation.Cumulative[option])
+						option++;
+					break;
+				}
+		}
+		Volatile.Write(ref state.Cues[v], option + 1);
+	}
+
+	// A new order of the options 0 to order.Length - 1 for round `round` (Fisher-Yates), not starting with `last`, the
+	// previous round's last, so no option plays twice running
+	private static void Shuffle(Span<int> order, uint seed, uint round, int last)
+	{
+		for (var i = 0; i < order.Length; i++)
+			order[i] = i;
+		var h = Mix(seed, round ^ 0x5F3759DFu);
+		for (var i = order.Length - 1; i > 0; i--)
+		{
+			h = Mix(h, (uint)i);
+			var j = (int)(h % (uint)(i + 1));
+			(order[i], order[j]) = (order[j], order[i]);
+		}
+		if (order[0] == last)
+			(order[0], order[^1]) = (order[^1], order[0]);
+	}
+
+	// A well-mixed 32 bits from two
+	private static uint Mix(uint a, uint b)
+	{
+		var h = (a ^ b) * 0x9E3779B1u;
+		h ^= h >> 16;
+		h *= 0x85EBCA6Bu;
+		h ^= h >> 13;
+		h *= 0xC2B2AE35u;
+		h ^= h >> 16;
+		return h;
+	}
+
+	// 0 to just under 1
+	private static float Unit(uint h) => (h >> 8) / 16777216f;
 
 	private void BarLine(int f, long frame)
 	{
@@ -389,6 +469,30 @@ internal sealed class MusicSource : AudioSource
 		var tick = barTick < song.Sections[section].LengthTicks ? barTick : 0;
 		for (var slot = 0; slot < swap.Levels.Length; slot++)
 			swap.Levels[slot] = -1f;
+		// The section carries on, so its picks do: each variation the new song shares by name keeps its pick and how many it
+		// has made, and its shuffled round where it has as many options; one the section names that the old song hadn't
+		// picks now, as it would have as the section started
+		var old = _state;
+		for (var v = 0; v < song.Variations.Length; v++)
+		{
+			var kept = false;
+			for (var o = 0; o < old.Song.Variations.Length && !kept; o++)
+			{
+				if (old.Song.Variations[o].Name != song.Variations[v].Name)
+					continue;
+				kept = true;
+				var n = song.Variations[v].Options;
+				swap.VariationPicks[v] = old.VariationPicks[o];
+				Volatile.Write(ref swap.Cues[v], Math.Min(Volatile.Read(ref old.Cues[o]), n));
+				if (old.Song.Variations[o].Options == n)
+					old.ShuffleOrders.AsSpan(o * old.Song.MostOptions, n).CopyTo(swap.ShuffleOrders.AsSpan(v * song.MostOptions, n));
+				else if (song.Variations[v].Pick == VariationPick.Shuffle)
+					// A new count of options: this round starts over
+					swap.VariationPicks[v] -= swap.VariationPicks[v] % n;
+			}
+			if (!kept && Array.IndexOf(song.Sections[section].Variations, v) >= 0)
+				Pick(swap, v);
+		}
 		_state = swap;
 		_publishedState = swap;
 		_section = section;
