@@ -124,6 +124,13 @@ public sealed class MusicFolder
 	public static MusicFolder FromDirectory(string directory) => Load(new DirectorySource(directory));
 
 	/// <summary>
+	/// The music in a <c>.lunelle</c> file, read as it is without unpacking it (project.md §6.3): what a player opens. Its
+	/// libraries are bundled in it; Lunelle's own is there too for one that isn't.
+	/// </summary>
+	/// <exception cref="InvalidDataException">It isn't a <c>.lunelle</c> file, or holds a path that would leave it.</exception>
+	public static MusicFolder FromPackage(byte[] package, string location = "the .lunelle file") => Load(ZipSource.Read(package, location));
+
+	/// <summary>
 	/// The music among <paramref name="files"/> (paths relative to the project's root, <c>/</c> between folders), each read
 	/// through <paramref name="read"/> by its path as given, with Lunelle's own library.
 	/// </summary>

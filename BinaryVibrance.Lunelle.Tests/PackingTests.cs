@@ -85,6 +85,8 @@ public class PackingTests
 
 		var original = MusicFolderTests.Folder(Files());
 		Render(unpacked).ShouldBe(Render(original));
+		// A player reads the file as it is
+		Render(MusicFolder.FromPackage(packed)).ShouldBe(Render(original));
 
 		ProjectPacker.Pack(unpacked.Project, unpacked.Resolver).Bytes.ShouldBe(packed);
 	}
