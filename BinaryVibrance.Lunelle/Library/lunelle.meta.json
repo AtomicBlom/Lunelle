@@ -1,0 +1,14 @@
+{
+  "format": "lunelle/2",
+  "name": "lunelle",
+  "title": "Lunelle's sounds",
+  "version": "1.0.0",
+  "about": "The patches and kits Lunelle ships, for any project to reference as lunelle:<id>: keys, bass, leads, synths, orchestra, guitars, mallets and percussion, four kits of patches and two sampled kits. A released sound never changes within a major version.",
+  "author": "BinaryVibrance",
+  "licence": "MIT; the sampled kits' own licences are in their folders",
+  "macros": {
+    "bright": { "number": 0, "about": "Opens a filter: duller at 0, brighter at 1" },
+    "drive": { "number": 1, "about": "Drives harder" },
+    "sweep": { "number": 2, "about": "Moves a filter across a section" }
+  }
+}

@@ -8,13 +8,13 @@ using BinaryVibrance.Sirrow.Dsp;
 namespace BinaryVibrance.Lunelle.Chip;
 
 /// <summary>
-/// A patch as a file, <c>lunelle-patch/1</c>: everything a <see cref="PatchSpec"/> holds as JSON, each operator named and
+/// A patch as a file, <c>lunelle-patch/2</c> (format 2): everything a <see cref="PatchSpec"/> holds as JSON, each operator named and
 /// routed by name, and only what differs from a new spec's defaults written, so a patch reads back exactly as it was.
 /// Lunelle's music generator turns the same file into the C# <see cref="PatchCode"/> writes.
 /// <code>
 /// {
-///   "format": "lunelle-patch/1",
-///   "name": "electric piano",
+///   "format": "lunelle-patch/2",
+///   "about": "A Rhodes-like electric piano",
 ///   "operators": [
 ///     { "name": "tine", "kind": "sine", "ratio": 14, "envelope": "decay 0.12", "level": 0.6, "velocity": 0.8 },
 ///     { "name": "body", "kind": "sine", "envelope": "adsr 0.002 1.6 0.2 0.3", "modulatedBy": [{ "op": "tine", "index": 1.2 }] }
@@ -25,15 +25,14 @@ namespace BinaryVibrance.Lunelle.Chip;
 /// </code>
 /// An envelope is <c>"gate"</c>, <c>"decay seconds"</c> (<see cref="Env.Decay"/>) or <c>"adsr a d s r"</c>; a mode is
 /// <c>"at ratio seconds [level]"</c> or <c>"fixed hz seconds [level]"</c>. A file whose patch is code (<c>"code":
-/// "Name"</c>, ejected) has no patch to read.
+/// "Name"</c>, ejected) has no patch to read. In a project, a patch's id is its path, and the project's resolver
+/// (<see cref="Format.Resolver"/>) resolves its <c>"base"</c> and gives it its id as its <c>"name"</c> before this reads it;
+/// a file read alone is named by its <c>"title"</c>.
 /// </summary>
 public static class PatchFile
 {
-	/// <summary>The format this writes, and reads with <see cref="FormatsBefore"/>.</summary>
-	public const string Format = "lunelle-patch/1";
-
-	/// <summary>The same format under the library's names before it was Lunelle (Sirrow's, then Loom's), read as <see cref="Format"/>.</summary>
-	public static readonly IReadOnlyList<string> FormatsBefore = ["sirrow-patch/1", "loom-patch/1"];
+	/// <summary>The format this writes and reads.</summary>
+	public const string Format = "lunelle-patch/2";
 
 	private static readonly OperatorSpec Defaults = new();
 
@@ -46,7 +45,8 @@ public static class PatchFile
 		ArgumentNullException.ThrowIfNull(spec);
 		var ops = spec.Operators;
 		var vars = PatchCode.OperatorNames(ops, names);
-		var file = new JsonObject { ["format"] = Format, ["name"] = spec.Name };
+		// Its id is its path: the name isn't written
+		var file = new JsonObject { ["format"] = Format };
 		if (spec.About.Length > 0)
 			file["about"] = spec.About;
 		file["operators"] = new JsonArray([.. ops.Select((op, i) => OperatorJson(op, vars, vars[i]))]);
@@ -161,12 +161,12 @@ public static class PatchFile
 	}
 
 	/// <summary>The patch a file holds.</summary>
-	/// <exception cref="FormatException">It isn't a <c>lunelle-patch/1</c> file, or holds something this can't read.</exception>
+	/// <exception cref="FormatException">It isn't a <c>lunelle-patch/2</c> file, or holds something this can't read.</exception>
 	/// <exception cref="PatchException">What it holds breaks a patch's rules.</exception>
 	public static Patch Load(string json) => Read(json).ToPatch();
 
 	/// <summary>What a file holds, as a spec to change or build.</summary>
-	/// <exception cref="FormatException">It isn't a <c>lunelle-patch/1</c> file, or holds something this can't read.</exception>
+	/// <exception cref="FormatException">It isn't a <c>lunelle-patch/2</c> file, or holds something this can't read.</exception>
 	public static PatchSpec Read(string json) => Read(json, out _);
 
 	/// <inheritdoc cref="Read(string)"/>
@@ -178,9 +178,11 @@ public static class PatchFile
 		using var document = Parse(json);
 		var root = document.RootElement;
 		var format = String(root, "format");
-		if (format != Format && !FormatsBefore.Contains(format))
+		if (format != Format)
 			throw new FormatException($"A patch file says \"format\": \"{Format}\"; this one says \"{format}\".");
-		var name = String(root, "name") ?? throw new FormatException("A patch file has a \"name\".");
+		if (root.TryGetProperty("base", out _))
+			throw new FormatException("A patch file with a \"base\" is resolved by its project before it is read.");
+		var name = String(root, "name") ?? String(root, "title") ?? "patch";
 		if (String(root, "code") is { } code)
 			throw new FormatException($"Patch '{name}' is code ({code}), not data: build it from its C#.");
 		var spec = new PatchSpec { Name = name, About = String(root, "about") ?? "" };

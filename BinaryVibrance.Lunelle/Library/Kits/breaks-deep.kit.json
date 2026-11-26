@@ -1,0 +1,14 @@
+{
+  "format": "lunelle-kit/1",
+  "about": "Drum and bass made deeper and harder, of patches: a kick that lands lower and faster under a short, hard click, a snare of two tones with ringing metal over them, hats up in the air. The kick sends to the key, as breaks' does",
+  "pieces": [
+    { "piece": "kick", "patch": "kits/breaks-deep-kick" },
+    { "piece": "snare", "patch": "kits/breaks-deep-snare" },
+    { "piece": "hat-closed", "patch": "kits/breaks-deep-hat-closed", "choke": 1 },
+    { "piece": "hat-open", "patch": "kits/breaks-deep-hat-open", "choke": 1 },
+    { "piece": "ride", "patch": "kits/breaks-deep-ride" },
+    { "piece": "crash", "patch": "kits/breaks-deep-crash" },
+    { "piece": "tom-high", "patch": "kits/breaks-deep-tom-high" },
+    { "piece": "tom-low", "patch": "kits/breaks-deep-tom-low" }
+  ]
+}

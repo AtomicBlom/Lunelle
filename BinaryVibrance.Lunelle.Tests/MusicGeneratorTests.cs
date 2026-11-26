@@ -229,20 +229,6 @@ public class MusicGeneratorTests
 		old.GetMessage().ShouldContain("\"exits\"");
 	}
 
-	[Test]
-	[Arguments(0)]
-	[Arguments(1)]
-	public void A_music_file_under_an_old_name_makes_the_same_code(int name)
-	{
-		var patchFile = PatchFile.Write(PluckSpec(), ["pick", "saw", "breath"]);
-		var now = Generate(("Patches/pluck.patch.json", patchFile), ("Songs/tune.song.json", Song));
-		var before = Generate(
-			("Patches/pluck.patch.json", patchFile.Replace(PatchFile.Format, PatchFile.FormatsBefore[name], StringComparison.Ordinal)),
-			("Songs/tune.song.json", Song.Replace(SongFile.Format, SongFile.FormatsBefore[name], StringComparison.Ordinal)));
-		before.Diagnostics.ShouldBeEmpty();
-		before.Run.GeneratedTrees.Select(tree => tree.ToString()).ShouldBe(now.Run.GeneratedTrees.Select(tree => tree.ToString()));
-	}
-
 	// The sample's folder, from this file's
 	private static string HelloSynthFolder([System.Runtime.CompilerServices.CallerFilePath] string here = "") =>
 		Path.GetFullPath(Path.Combine(Path.GetDirectoryName(here)!, "..", "samples", "HelloSynth"));

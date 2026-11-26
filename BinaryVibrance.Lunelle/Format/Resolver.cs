@@ -164,8 +164,16 @@ sealed class Resolver
 				_entries[key] = null;
 				return null;
 			}
-			result = (JObject)resolvedBase.Json.Clone();
 			layers = new List<EntryFile>(resolvedBase.Layers) { entry };
+			// Counted from the layers, not the calls: a base resolved before is a whole chain all the same
+			if (layers.Count - 1 > MaxDepth)
+			{
+				Problems.Add(new FormatProblem(entry.Label, $"its chain of bases is more than {MaxDepth} deep: {string.Join(" → ", layers.Select(l => l.Key))}"));
+				chain.RemoveAt(chain.Count - 1);
+				_entries[key] = null;
+				return null;
+			}
+			result = (JObject)resolvedBase.Json.Clone();
 			provenance = new Dictionary<string, string>(resolvedBase.Provenance, StringComparer.Ordinal);
 			foreach (var pair in resolvedBase.Patches)
 				patches[pair.Key] = pair.Value;
@@ -533,7 +541,7 @@ sealed class Resolver
 			{
 				"velocity" => true,
 				"pieces" => kind == "beat",
-				"octave" or "overChords" => kind == "line" || (member.Key == "octave" && kind == "strum"),
+				"octave" or "overChords" => kind == "line",
 				_ => kind == "strum",
 			};
 			if (!allowed)
@@ -685,7 +693,7 @@ sealed class Resolver
 			else
 			{
 				content.Set(kind!, new JString(step)).Set("notes", json["notes"]!.Clone());
-				foreach (var option in kind == "line" ? new[] { "overChords", "octave" } : new[] { "voicing", "spread", "octave" })
+				foreach (var option in kind == "line" ? new[] { "overChords", "octave" } : new[] { "voicing", "spread" })
 					if (json[option] is { } value)
 						content.Set(option, value.Clone());
 				made = new PatternContent(kind!, meter, content);

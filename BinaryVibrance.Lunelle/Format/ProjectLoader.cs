@@ -32,11 +32,11 @@ static class ProjectLoader
 	public static LoadedProject Load(IProjectSource source, Func<string, IProjectSource?>? host = null)
 	{
 		var problems = new List<FormatProblem>();
-		var root = Load(source, "", null, host, problems, new List<string>()) ?? new ProjectLibrary(source, new Manifest(), "", null);
+		var root = LoadLibrary(source, "", null, host, problems, new List<string>()) ?? new ProjectLibrary(source, new Manifest(), "", null);
 		return new LoadedProject(root, problems);
 	}
 
-	private static ProjectLibrary? Load(IProjectSource source, string key, ProjectLibrary? parent, Func<string, IProjectSource?>? host,
+	private static ProjectLibrary? LoadLibrary(IProjectSource source, string key, ProjectLibrary? parent, Func<string, IProjectSource?>? host,
 		List<FormatProblem> problems, List<string> route)
 	{
 		string Label(string path) => key.Length == 0 ? path : key + ":" + path;
@@ -94,7 +94,7 @@ static class ProjectLoader
 				library.Libraries[reference.LocalName] = null;
 				continue;
 			}
-			var child = Load(found, childKey, library, host, problems, route);
+			var child = LoadLibrary(found, childKey, library, host, problems, route);
 			library.Libraries[reference.LocalName] = child;
 			if (child is null || reference.Version is not { } wanted)
 				continue;

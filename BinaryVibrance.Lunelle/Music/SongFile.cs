@@ -7,13 +7,14 @@ using BinaryVibrance.Lunelle.Chip;
 namespace BinaryVibrance.Lunelle.Music;
 
 /// <summary>
-/// A song as a file, <c>lunelle-song/2</c>: everything a <see cref="Song"/> is, its patches, kits, cues and macros named,
-/// written a part to a line. Lunelle's music generator turns the same file into the C# a person would have written; at run
+/// A song as a file, <c>lunelle-song/3</c> (format 2): everything a <see cref="Song"/> is, its patches, kits, cues and
+/// macros named, written a part to a line. In a project, a song's id is its path (<c>Songs/open-road.song.json</c> is
+/// <c>open-road</c>), and the project's resolver (<see cref="Format.Resolver"/>) writes in its patterns, finds its
+/// sounds and gives it its id as its <c>"name"</c> before this reads it. Lunelle's music generator turns the same file into the C# a person would have written; at run
 /// time <see cref="Load"/> builds it with the names bound by a <see cref="SongBindings"/>.
 /// <code>
 /// {
-///   "format": "lunelle-song/2",
-///   "name": "open-road",
+///   "format": "lunelle-song/3",
 ///   "tempo": 108,
 ///   "scale": "G major",
 ///   "groups": [{ "name": "wide", "effects": [{ "fx": "chorus", "mix": 0.4 }] }],
@@ -44,23 +45,11 @@ namespace BinaryVibrance.Lunelle.Music;
 /// picked afresh as a section that names them starts and named in conditions as choices are (<c>"fill is 2"</c>), each
 /// <c>{ "name", "options", "pick" }</c> (<c>"random"</c>, the default, <c>"cycle"</c> or <c>"shuffle"</c>) with
 /// <c>"weights"</c>, one an option, for picking at random; <c>"hooks": ["OnBuilt"]</c> hands the built song to code of the game's own. A
-/// <c>loom-song/1</c> file, whose song-wide <c>"order"</c> or <c>"conduct"</c> chose the next section, is refused, naming
-/// how to move it.
 /// </summary>
 public static class SongFile
 {
-	/// <summary>The format this writes, and reads with <see cref="FormatsBefore"/>.</summary>
-	public const string Format = "lunelle-song/2";
-
-	/// <summary>The same format under the library's names before it was Lunelle (Sirrow's, then Loom's), read as <see cref="Format"/>.</summary>
-	public static readonly IReadOnlyList<string> FormatsBefore = ["sirrow-song/2", "loom-song/2"];
-
-	// What a loom-song/1 file is told to do to be read
-	private const string FromVersion1 = "loom-song/1 chose the next section for the whole song (\"order\", \"conduct\"); lunelle-song/2 "
-		+ "gives each section its \"exits\": [{ \"when\": \"…\", \"then\": \"section\" }, …, { \"then\": \"section\" }], tried in "
-		+ "order as it ends. An order A, B, C is A's exits [{ \"then\": \"B\" }] and so on round; a section played twice in a "
-		+ "row is [{ \"when\": \"pass < 2\", \"then\": itself }, …]; conduct's rules are each section's exits. Then set "
-		+ "\"format\": \"lunelle-song/2\"";
+	/// <summary>The format this writes and reads.</summary>
+	public const string Format = "lunelle-song/3";
 
 	private static readonly (string Name, Func<Note, Scale> Make)[] Scales =
 	[
@@ -97,7 +86,6 @@ public static class SongFile
 		var file = new JsonObject
 		{
 			["format"] = Format,
-			["name"] = song.Name,
 			["tempo"] = song.Tempo,
 		};
 		if (song.Meter != Meter.FourFour)
@@ -275,7 +263,7 @@ public static class SongFile
 	};
 
 	/// <summary>The song a file holds, built with its names bound by <paramref name="bindings"/>.</summary>
-	/// <exception cref="FormatException">It isn't a <c>lunelle-song/2</c> file, or names something the bindings don't have.</exception>
+	/// <exception cref="FormatException">It isn't a <c>lunelle-song/3</c> file, or names something the bindings don't have.</exception>
 	/// <exception cref="NotationException">A part's notation has a mistake.</exception>
 	public static Song Load(string json, SongBindings bindings)
 	{
@@ -284,13 +272,10 @@ public static class SongFile
 		using var document = PatchFile.Parse(json);
 		var root = document.RootElement;
 		var format = PatchFile.String(root, "format");
-		if (format == "loom-song/1")
-			throw new FormatException($"A song file says \"format\": \"loom-song/1\"; this reads \"{Format}\". {FromVersion1}.");
-		if (format != Format && !FormatsBefore.Contains(format))
+		if (format != Format)
 			throw new FormatException($"A song file says \"format\": \"{format}\"; this reads \"{Format}\".");
-		if (root.TryGetProperty("order", out _) || root.TryGetProperty("conduct", out _))
-			throw new FormatException($"A song file has a song-wide \"order\" or \"conduct\". {FromVersion1}.");
-		var name = PatchFile.String(root, "name") ?? throw new FormatException("A song file has a \"name\".");
+		// A project's resolver gives a song its id as its name; a file read alone is "song"
+		var name = PatchFile.String(root, "name") ?? "song";
 		FormatException Error(string why) => new($"Song '{name}': {why}.");
 
 		var song = new Song(name);
@@ -398,8 +383,35 @@ public static class SongFile
 				? track
 				: throw Error($"{where} is played by a track that isn't one ({element})");
 
+		// A part's content, then played harder or softer by its "velocity"
 		Part PartOf(JsonElement element, string where)
 		{
+			var part = ContentOf(element, where);
+			if (element.TryGetProperty("velocity", out var velocity))
+			{
+				var scale = velocity.ValueKind == JsonValueKind.Number ? velocity.GetSingle() : -1f;
+				if (scale is < 0f or > 2f)
+					throw Error($"{where}: \"velocity\" scales its velocities, from 0 to 2");
+				part = part.Velocity(scale);
+			}
+			return part;
+		}
+
+		// A line, a beat, a strum, code, or a "sequence" of them played one after another
+		Part ContentOf(JsonElement element, string where)
+		{
+			if (element.TryGetProperty("sequence", out var sequence))
+			{
+				var items = new List<(Part, int)>();
+				foreach (var item in sequence.EnumerateArray())
+				{
+					var times = item.TryGetProperty("times", out var t) && t.ValueKind == JsonValueKind.Number ? t.GetInt32() : 1;
+					if (times < 1)
+						throw Error($"{where}: a sequence's part plays once or more (\"times\")");
+					items.Add((PartOf(item, where), times));
+				}
+				return items.Count > 0 ? Part.Sequence([.. items]) : throw Error($"{where}: a \"sequence\" lists parts");
+			}
 			if (PatchFile.Object(element, "part") is { } code)
 				return bindings.Part(PatchFile.String(code, "code") ?? "") ?? throw Error($"{where}: no part is code named {code}");
 			if (PatchFile.String(element, "line") is { } lineStep)
