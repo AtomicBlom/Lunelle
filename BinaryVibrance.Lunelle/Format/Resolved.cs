@@ -81,6 +81,9 @@ sealed class ResolvedSong
 	/// <summary>The cues it imports, in the order written.</summary>
 	public List<ImportedCue> Cues { get; } = new();
 
+	/// <summary>Its exports, checked: each a scripted run of it to render (exports.md).</summary>
+	public List<ExportSpec> Exports { get; } = new();
+
 	/// <summary>The cue a reference names among those it imports (<c>lava/heat</c>, <c>game:mood</c>), or null.</summary>
 	public ImportedCue? Cue(string reference)
 	{

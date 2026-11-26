@@ -458,6 +458,7 @@ sealed class Resolver
 			}
 		}
 		json.Set("name", new JString(song.Id));
+		resolved.Exports.AddRange(ExportSpec.Read(json, resolved, song.Owner.Manifest.Macros.Select(m => m.Name).ToList(), (message, at) => Problem(message, at)));
 		return resolved;
 	}
 

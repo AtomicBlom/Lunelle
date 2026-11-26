@@ -44,6 +44,7 @@ internal sealed class MusicSource : AudioSource
 	private int _next = -1;
 	private bool _loop;
 	private int _jump = -1;
+	private bool _silenced;   // a song export's end: nothing more is sequenced, and the chip rings out
 	private SongState? _swap;
 	private int _noteId;
 
@@ -125,6 +126,12 @@ internal sealed class MusicSource : AudioSource
 
 	protected override bool Render(Span<float> left, Span<float> right, in AudioRenderInfo info)
 	{
+		if (_silenced)
+		{
+			_core.Render(left[..info.Frames], right[..info.Frames]);
+			_frame += info.Frames;
+			return true;
+		}
 		TakeCommands();
 		_core.ClearPeaks();
 		var n = info.Frames;
@@ -166,6 +173,62 @@ internal sealed class MusicSource : AudioSource
 		_frame += n;
 		Publish();
 		return true;
+	}
+
+	// What a song export steers by (SongExport), on the thread that renders, between blocks
+
+	// Starts at another section than the first: before the first block
+	internal void StartAt(int section) => _section = section;
+
+	// The section playing, as the sequencer has it (not as published)
+	internal int CurrentSection => _section;
+
+	// The pass of it this is, 1 the first time in a row
+	internal int CurrentPass => _pass;
+
+	// The frames before the next change of section: its end, or the next bar line while a jump waits for one. 0 when the
+	// next block starts with it. The same sums as Render's, so it lands on the very frame
+	internal long FramesToChange()
+	{
+		var length = _state.Song.Sections[_section].LengthTicks;
+		var frames = FramesTo(length);
+		return _jump >= 0 ? Math.Min(frames, FramesTo(_nextBar)) : frames;
+	}
+
+	private long FramesTo(double tick)
+	{
+		var f = (long)Math.Max(0, Math.Ceiling((tick - Epsilon - _tick) / _ticksPerFrame));
+		while (f > 0 && _tick + (f - 1) * _ticksPerFrame + Epsilon >= tick)
+			f--;
+		while (_tick + f * _ticksPerFrame + Epsilon < tick)
+			f++;
+		return f;
+	}
+
+	// The section that comes next at that change, as EndSection or a jump would choose it, choosing nothing
+	internal int PeekNext()
+	{
+		if (_jump >= 0)
+			return Math.Min(_jump, _state.Song.Sections.Length - 1);
+		var song = _state.Song;
+		if (_loop)
+			return _section;
+		if (_next >= 0 && _next < song.Sections.Length)
+			return _next;
+		foreach (var exit in song.Sections[_section].Exits)
+			if (Holds(exit.When))
+				return exit.To;
+		return _section;
+	}
+
+	// Holds a track's macro (NaN lets it go), from the next block
+	internal void Hold(int track, int macro, float value) => _state.HeldMacros[track * Macro.Count + macro] = value;
+
+	// Lets every note go and sequences nothing more: the chip rings out what it has
+	internal void Silence()
+	{
+		_core.Handle(new ChipEvent { Kind = ChipEventKind.AllOff });
+		_silenced = true;
 	}
 
 	// The chip a swap replaced, from where in the block the swap fell, added in under a fade over its last moments
@@ -232,6 +295,9 @@ internal sealed class MusicSource : AudioSource
 				case MusicCommandKind.Force:
 					state.Forced[command.A][command.B] = (PlacementState)(int)command.Value;
 					break;
+				case MusicCommandKind.HoldMacro:
+					state.HeldMacros[command.A * Macro.Count + command.B] = command.Value;
+					break;
 			}
 		}
 	}
@@ -275,6 +341,11 @@ internal sealed class MusicSource : AudioSource
 			foreach (var sweep in section.Sweeps)
 				state.Instruments[sweep.Track].Macros[sweep.Macro] = Math.Clamp(sweep.From + (sweep.To - sweep.From) * through, 0f, 1f);
 		}
+		// A macro the game holds is that, over all of it
+		for (var t = 0; t < song.Tracks.Length; t++)
+			for (var m = 0; m < Macro.Count; m++)
+				if (state.HeldMacros[t * Macro.Count + m] is var held && !float.IsNaN(held))
+					state.Instruments[t].Macros[m] = Math.Clamp(held, 0f, 1f);
 	}
 
 	// The section's end: Loop holds it; else a section a tool chose; else the first of its exits that holds, on the pass

@@ -531,6 +531,15 @@ public static class SongFile
 			: null;
 	}
 
+	// A scale as a song file writes it ("G major"), for what names one outside a song's file: an export's "scale"
+	internal static Scale? ParseScaleText(string text)
+	{
+		var quoted = new System.Text.StringBuilder();
+		BinaryVibrance.Lunelle.Format.JWriter.Quote(quoted, text);
+		using var document = JsonDocument.Parse(quoted.ToString());
+		return ParseScale(document.RootElement);
+	}
+
 	private static Scale? ParseScale(JsonElement element)
 	{
 		if (element.ValueKind == JsonValueKind.String)

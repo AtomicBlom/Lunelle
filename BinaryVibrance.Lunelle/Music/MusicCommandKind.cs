@@ -11,4 +11,5 @@ internal enum MusicCommandKind : byte
 	Solo,       // A: the track; Value: 1 soloed
 	TrackGain,  // A: the track; Value: a linear gain over its level
 	Force,      // A: the section; B: the placement; Value: the PlacementState
+	HoldMacro,  // A: the track; B: the macro; Value: the value held, or NaN to let it go
 }
