@@ -200,6 +200,19 @@ public sealed class MusicFolder
 	/// <exception cref="NotationException">A part's notation has a mistake.</exception>
 	public Song BuildSong(string id, string text, Func<SongBindings, SongBindings>? wrap = null)
 	{
+		var (resolved, problem) = Resolve(id, text);
+		if (problem is not null)
+			throw new FormatException($"Song '{id}': {problem.Message}.");
+		return BuildSong(resolved, wrap);
+	}
+
+	/// <summary>
+	/// Song <paramref name="id"/> resolved from <paramref name="text"/> in place of its file, as an editor has it, and the
+	/// first error resolving it found, or null: what a pattern a part plays writes into it, say.
+	/// </summary>
+	/// <exception cref="FormatException">The text isn't a JSON object.</exception>
+	public (ResolvedSong Song, FormatProblem? Problem) Resolve(string id, string text)
+	{
 		ArgumentNullException.ThrowIfNull(text);
 		JNode json;
 		try
@@ -216,9 +229,7 @@ public sealed class MusicFolder
 		// A resolver of its own, so an edit's problems are this build's alone
 		var resolver = new Resolver(Project);
 		var resolved = resolver.Song(new EntryFile(Project.Root, EntryKind.Song, id, path, root));
-		if (resolver.Problems.FirstOrDefault(p => !p.IsWarning) is { } problem)
-			throw new FormatException($"Song '{id}': {problem.Message}.");
-		return BuildSong(resolved, wrap);
+		return (resolved, resolver.Problems.FirstOrDefault(p => !p.IsWarning));
 	}
 
 	private Song BuildSong(ResolvedSong resolved, Func<SongBindings, SongBindings>? wrap = null)
