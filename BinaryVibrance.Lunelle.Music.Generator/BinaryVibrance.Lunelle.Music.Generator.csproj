@@ -25,6 +25,18 @@
 		<PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
 	</ItemGroup>
 
+	<!--
+		Format 2's one resolver, the very source Lunelle reads a project of files with (overrides.md §8), so a project plays
+		the same with code and without: compiled here as an internal copy in a namespace of its own (LUNELLE_GENERATOR).
+		Not Format/Sources, which reads disks and zips; the generator reads its compilation's additional files.
+	-->
+	<PropertyGroup>
+		<DefineConstants>$(DefineConstants);LUNELLE_GENERATOR</DefineConstants>
+	</PropertyGroup>
+	<ItemGroup>
+		<Compile Include="..\BinaryVibrance.Lunelle\Format\*.cs" Link="Format\%(Filename)%(Extension)" />
+	</ItemGroup>
+
 	<ItemGroup>
 		<InternalsVisibleTo Include="BinaryVibrance.Lunelle.Tests" />
 		<InternalsVisibleTo Include="BinaryVibrance.LunelleStudio.Tests" />

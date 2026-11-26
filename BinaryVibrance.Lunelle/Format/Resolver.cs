@@ -322,7 +322,7 @@ sealed class Resolver
 			var file = Find(song.Owner, kind, reference, out var why);
 			if (file is null)
 			{
-				Problem(why!, at);
+				Problems.Add(new FormatProblem(song.Label, why!, at.Start, at.Length, missing: EntryIds.Noun(kind) + ":" + reference));
 				return null;
 			}
 			return Resolve(file);

@@ -21,6 +21,8 @@
 	<ItemGroup>
 		<EmbeddedResource Include="Library\**\*" LogicalName="library/%(RecursiveDir)%(Filename)%(Extension)" />
 		<None Remove="Library\**\*" />
+		<!-- And beside the package's build props, for a project with code to hand its generator (build/BinaryVibrance.Lunelle.props) -->
+		<None Include="Library\**\*" Pack="true" PackagePath="Library" Visible="false" />
 	</ItemGroup>
 
 	<ItemGroup>

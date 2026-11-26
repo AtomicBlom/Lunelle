@@ -17,14 +17,21 @@ public
 sealed class FormatProblem
 {
 	/// <summary>A problem.</summary>
-	public FormatProblem(string file, string message, int start = 0, int length = 0, bool warning = false)
+	public FormatProblem(string file, string message, int start = 0, int length = 0, bool warning = false, string? missing = null)
 	{
 		File = file;
 		Message = message;
 		Start = start;
 		Length = length;
 		IsWarning = warning;
+		Missing = missing;
 	}
+
+	/// <summary>
+	/// For a reference to a sound that isn't there, what it names: <c>patch:lead</c>, <c>kit:drums</c>. A project with code
+	/// may have that sound in C#, which the generator finds where the resolver can't.
+	/// </summary>
+	public string? Missing { get; }
 
 	/// <summary>The file, as its project names it (<c>Songs/aurora.song.json</c>), or <c>lunelle:Patches/x.patch.json</c> in a library.</summary>
 	public string File { get; }

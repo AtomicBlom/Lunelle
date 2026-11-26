@@ -1,5 +1,7 @@
 using System.Text;
 
+using BinaryVibrance.Lunelle.Music.Generator.Format;
+
 namespace BinaryVibrance.Lunelle.Music.Generator;
 
 /// <summary>
@@ -26,10 +28,10 @@ internal sealed class PatchEmitter(MusicContext context)
 	}
 
 	/// <summary>The property for the patch file <paramref name="root"/>, indented by <paramref name="indent"/>.</summary>
-	/// <exception cref="JsonError">The file says something that isn't a patch.</exception>
-	public IEnumerable<string> Property(Json root, string property, string indent)
+	/// <exception cref="FormatError">The file says something that isn't a patch.</exception>
+	public IEnumerable<string> Property(JNode root, string property, string indent)
 	{
-		var name = Need(root, "name").Str ?? throw new JsonError("a patch's \"name\" is text", root["name"]!.Span);
+		var name = Need(root, "name").Str ?? throw new FormatError("a patch's \"name\" is text", root["name"]!);
 
 		var lines = new List<string>();
 		if (root["about"]?.Str is { } about)
@@ -43,19 +45,19 @@ internal sealed class PatchEmitter(MusicContext context)
 
 		var ops = new List<Op>();
 		var index = new Dictionary<string, int>();
-		int OpNamed(Json? named, string what)
+		int OpNamed(JNode? named, string what)
 		{
 			var opName = named?.Str;
 			return opName is not null && index.TryGetValue(opName, out var i)
 				? i
-				: throw new JsonError($"{what} names operator '{opName}', which no operator before it is", named?.Span ?? root.Span);
+				: throw new FormatError($"{what} names operator '{opName}', which no operator before it is", named ?? root);
 		}
 		foreach (var element in root["operators"]?.Items ?? [])
 		{
 			var op = new Op
 			{
 				Name = element["name"]?.Str ?? $"op{ops.Count + 1}",
-				Kind = element["kind"]?.Str ?? throw new JsonError("an operator has a \"kind\"", element.Span),
+				Kind = element["kind"]?.Str ?? throw new FormatError("an operator has a \"kind\"", element),
 				Ratio = element["ratio"]?.Num ?? "1",
 				Fixed = element["fixed"]?.Num,
 				Detune = element["detune"]?.Num,
@@ -75,20 +77,20 @@ internal sealed class PatchEmitter(MusicContext context)
 				KeyDecay = element["keyDecay"]?.Num,
 			};
 			if (op.Kind is not ("sine" or "saw" or "pulse" or "noise" or "level" or "string" or "tube" or "modes"))
-				throw new JsonError($"\"{op.Kind}\" isn't a kind of operator (sine, saw, pulse, noise, level, string, tube, modes)", element["kind"]!.Span);
+				throw new FormatError($"\"{op.Kind}\" isn't a kind of operator (sine, saw, pulse, noise, level, string, tube, modes)", element["kind"]!);
 			foreach (var m in element["modulatedBy"]?.Items ?? [])
 				op.Modulators.Add((OpNamed(m["op"], $"'{op.Name}' is modulated by"), m["index"]?.Num ?? "0"));
 			foreach (var d in element["drivenBy"]?.Items ?? [])
 				op.Drivers.Add(OpNamed(d, $"'{op.Name}' is driven by"));
 			if (index.ContainsKey(op.Name))
-				throw new JsonError($"two operators are named '{op.Name}'", element["name"]?.Span ?? element.Span);
+				throw new FormatError($"two operators are named '{op.Name}'", element["name"] ?? element);
 			index[op.Name] = ops.Count;
 			ops.Add(op);
 		}
 		var vars = Names(ops);
 		var taps = (root["out"]?.Items ?? []).Select(t => (Op: OpNamed(t["op"], "out"), Level: t["level"]?.Num, Pan: t["pan"]?.Num)).ToList();
 		var macros = (root["macros"]?.Items ?? []).Select(m => (
-			Macro: m["macro"] ?? throw new JsonError("a macro names its \"macro\"", m.Span),
+			Macro: m["macro"] ?? throw new FormatError("a macro names its \"macro\"", m),
 			Target: m["target"]?.Str ?? "filterCutoff",
 			From: m["from"]?.Num ?? "0",
 			To: m["to"]?.Num ?? "1",
@@ -138,19 +140,19 @@ internal sealed class PatchEmitter(MusicContext context)
 			var one = $"p.Out({string.Join(", ", heardText)});";
 			body.Add(one.Length <= 110 ? one : $"p.Out(\n    {string.Join(",\n    ", heardText)});");
 		}
-		if (root["filter"] is JsonObj filter)
+		if (root["filter"] is JObject filter)
 			body.Add($"p.Filter({FilterCode(filter, root)});");
-		if (root["pitchDrop"] is JsonObj drop)
+		if (root["pitchDrop"] is JObject drop)
 			body.Add($"p.PitchDrop({Code.F(drop["semitones"]?.Num ?? "0")}, {Code.F(drop["seconds"]?.Num ?? "0")});");
-		if (root["vibrato"] is JsonObj vibrato)
+		if (root["vibrato"] is JObject vibrato)
 			body.Add($"p.Vibrato({Code.F(vibrato["rate"]?.Num ?? "0")}, {Code.F(vibrato["depth"]?.Num ?? "0")}{(vibrato["delay"]?.Num is { } delay ? ", " + Code.F(delay) : "")});");
-		if (root["tremolo"] is JsonObj tremolo)
+		if (root["tremolo"] is JObject tremolo)
 			body.Add($"p.Tremolo({Code.F(tremolo["rate"]?.Num ?? "0")}, {Code.F(tremolo["depth"]?.Num ?? "0")});");
 		if (root["drive"]?.Num is { } drive)
 			body.Add($"p.Drive({Code.F(drive)});");
-		if (root["mono"] is JsonObj mono)
+		if (root["mono"] is JObject mono)
 			body.Add(mono["glide"]?.Num is { } glide ? $"p.Mono({Code.F(glide)});" : "p.Mono();");
-		if (root["sends"] is JsonObj sends)
+		if (root["sends"] is JObject sends)
 		{
 			if (sends["space"]?.Num is { } space)
 				body.Add($"p.Send(ChipSend.Space, {Code.F(space)});");
@@ -178,7 +180,7 @@ internal sealed class PatchEmitter(MusicContext context)
 		return lines;
 	}
 
-	private static Json Need(Json root, string key) => root[key] ?? throw new JsonError($"a patch file has a \"{key}\"", root.Span);
+	private static JNode Need(JNode root, string key) => root[key] ?? throw new FormatError($"a patch file has a \"{key}\"", root);
 
 	// The variable each operator is written with, as PatchCode.OperatorNames names them
 	private static string[] Names(List<Op> ops)
@@ -217,7 +219,7 @@ internal sealed class PatchEmitter(MusicContext context)
 	];
 
 	/// <summary>An envelope as the file says it, as C#.</summary>
-	public static string Envelope(string text, Json where)
+	public static string Envelope(string text, JNode where)
 	{
 		var w = text.Split([' '], StringSplitOptions.RemoveEmptyEntries);
 		if (w.Length == 1 && w[0] == "gate")
@@ -226,7 +228,7 @@ internal sealed class PatchEmitter(MusicContext context)
 			return $"Env.Decay({Code.F(w[1])})";
 		if (w.Length == 5 && w[0] == "adsr")
 			return $"Env.Adsr({Code.F(w[1])}, {Code.F(w[2])}, {Code.F(w[3])}, {Code.F(w[4])})";
-		throw new JsonError($"\"{text}\" isn't an envelope (\"gate\", \"decay s\" or \"adsr a d s r\")", where.Span);
+		throw new FormatError($"\"{text}\" isn't an envelope (\"gate\", \"decay s\" or \"adsr a d s r\")", where);
 	}
 
 	private static string LevelArgs(Op o, bool force)
@@ -236,7 +238,7 @@ internal sealed class PatchEmitter(MusicContext context)
 		return velocity ? text + $", velocity: {Code.F(o.Velocity!)}" : text;
 	}
 
-	private static string Expression(Op o, string[] vars, Json root)
+	private static string Expression(Op o, string[] vars, JNode root)
 	{
 		var env = Envelope(o.Envelope, root);
 		var pulseWidth = o.Kind == "pulse" && Code.Value(o.PulseWidth) != 0.5f;
@@ -269,18 +271,18 @@ internal sealed class PatchEmitter(MusicContext context)
 		return text;
 	}
 
-	private static string ModeCode(string mode, Json root)
+	private static string ModeCode(string mode, JNode root)
 	{
 		var words = mode.Split([' '], StringSplitOptions.RemoveEmptyEntries);
 		if (words.Length is < 3 or > 4 || words[0] is not ("at" or "fixed"))
-			throw new JsonError($"\"{mode}\" isn't a mode (\"at ratio seconds [level]\" or \"fixed hz seconds [level]\")", root.Span);
+			throw new FormatError($"\"{mode}\" isn't a mode (\"at ratio seconds [level]\" or \"fixed hz seconds [level]\")", root);
 		var level = words.Length == 4 ? ", " + Code.F(words[3]) : "";
 		return $"Mode.{(words[0] == "at" ? "At" : "Fixed")}({Code.F(words[1])}, {Code.F(words[2])}{level})";
 	}
 
-	private static string FilterCode(JsonObj f, Json root)
+	private static string FilterCode(JObject f, JNode root)
 	{
-		var text = new StringBuilder($"Filter.{Code.Pascal(f["kind"]?.Str ?? "lowPass")}({Code.F(f["cutoff"]?.Num ?? throw new JsonError("a filter has a \"cutoff\"", f.Span))}");
+		var text = new StringBuilder($"Filter.{Code.Pascal(f["kind"]?.Str ?? "lowPass")}({Code.F(f["cutoff"]?.Num ?? throw new FormatError("a filter has a \"cutoff\"", f))}");
 		if (f["q"]?.Num is { } q)
 			text.Append($", q: {Code.F(q)}");
 		if (f["keyTrack"]?.Num is { } keyTrack)

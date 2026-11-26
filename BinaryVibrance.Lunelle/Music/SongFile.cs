@@ -239,6 +239,21 @@ public static class SongFile
 				if (strum.SpreadMs != 12f)
 					strumJson["spread"] = strum.SpreadMs;
 				return strumJson;
+			case PartVelocity velocity:
+				var scaled = ToJson(velocity.Inner);
+				scaled["velocity"] = velocity.Scale * (scaled["velocity"]?.GetValue<float>() ?? 1f);
+				return scaled;
+			case PartSequence sequence:
+				return new JsonObject
+				{
+					["sequence"] = new JsonArray([.. sequence.Items.Select(item =>
+					{
+						var json = ToJson(item.Part);
+						if (item.Times != 1)
+							json["times"] = item.Times;
+						return (JsonNode)json;
+					})]),
+				};
 			default:
 				throw new NotSupportedException($"A part a file can't say: {part.GetType().Name}.");
 		}
