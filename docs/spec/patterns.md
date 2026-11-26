@@ -1,6 +1,6 @@
 # Spec: patterns (format 2)
 
-Status: **draft**. Builds on [project.md](project.md).
+Status: **implemented** (format-2 branch). Builds on [project.md](project.md).
 
 ## 1. What a pattern is
 

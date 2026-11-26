@@ -1,6 +1,6 @@
 # Spec: song exports (format 2)
 
-Status: **draft**. Builds on [project.md](project.md) and [cues.md](cues.md).
+Status: **implemented** (format-2 branch). Builds on [project.md](project.md) and [cues.md](cues.md).
 
 ## 1. What an export is
 

@@ -1,6 +1,6 @@
 # Spec: the project and the `.lunelle` file (format 2)
 
-Status: **draft**. Part of format 2, with [overrides.md](overrides.md), [cues.md](cues.md), [patterns.md](patterns.md) and
+Status: **implemented** (format-2 branch). Part of format 2, with [overrides.md](overrides.md), [cues.md](cues.md), [patterns.md](patterns.md) and
 [exports.md](exports.md). Nothing
 here is built yet. Format 1 has no users, so format 2 doesn't read it: the samples and presets are converted once,
 by hand or by script.

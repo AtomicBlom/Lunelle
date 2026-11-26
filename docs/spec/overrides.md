@@ -1,6 +1,6 @@
 # Spec: overrides (format 2)
 
-Status: **draft**. Builds on [project.md](project.md) (ids, references, libraries).
+Status: **implemented** (format-2 branch). Builds on [project.md](project.md) (ids, references, libraries).
 
 ## 1. What overrides are for
 
