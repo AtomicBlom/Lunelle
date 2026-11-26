@@ -191,7 +191,37 @@ public sealed class MusicFolder
 	private ResolvedEntry? Find(EntryKind kind, string reference) =>
 		Resolver.Find(Project.Root, kind, reference, out _) is { } file ? Resolver.Resolve(file) : null;
 
-	private Song BuildSong(ResolvedSong resolved)
+	/// <summary>
+	/// Song <paramref name="id"/> built from <paramref name="text"/> in place of its file, as an editor has it: resolved as
+	/// that file would be (its sounds, its patterns, its cues), its bindings passed through <paramref name="wrap"/> to be
+	/// watched or changed. What the resolver finds wrong in it is an error.
+	/// </summary>
+	/// <exception cref="FormatException">The text has an error, or names something the project doesn't have.</exception>
+	/// <exception cref="NotationException">A part's notation has a mistake.</exception>
+	public Song BuildSong(string id, string text, Func<SongBindings, SongBindings>? wrap = null)
+	{
+		ArgumentNullException.ThrowIfNull(text);
+		JNode json;
+		try
+		{
+			json = JReader.Parse(text);
+		}
+		catch (FormatError error)
+		{
+			throw new FormatException($"Song '{id}': {error.Message}.", error);
+		}
+		if (json is not JObject root)
+			throw new FormatException($"Song '{id}' isn't a JSON object.");
+		var path = SongPath(id) ?? EntryIds.Folder(EntryKind.Song) + id + EntryIds.Suffix(EntryKind.Song);
+		// A resolver of its own, so an edit's problems are this build's alone
+		var resolver = new Resolver(Project);
+		var resolved = resolver.Song(new EntryFile(Project.Root, EntryKind.Song, id, path, root));
+		if (resolver.Problems.FirstOrDefault(p => !p.IsWarning) is { } problem)
+			throw new FormatException($"Song '{id}': {problem.Message}.");
+		return BuildSong(resolved, wrap);
+	}
+
+	private Song BuildSong(ResolvedSong resolved, Func<SongBindings, SongBindings>? wrap = null)
 	{
 		var song = resolved.File.Id;
 		var bindings = new SongBindings
@@ -211,7 +241,7 @@ public sealed class MusicFolder
 			Placement = (_, section, track) => section.Play(track, Rest.Bar),
 			Hook = (_, _, _) => { },
 		};
-		return SongFile.Load(resolved.Json.ToString(), bindings);
+		return SongFile.Load(resolved.Json.ToString(), wrap?.Invoke(bindings) ?? bindings);
 	}
 
 	private static Patch BuildPatch(ResolvedEntry patch)
