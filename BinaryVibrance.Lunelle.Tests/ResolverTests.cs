@@ -207,6 +207,36 @@ public class ResolverTests
 		kit.Json["pieces"]!.Items[0]["layers"]!.Items[0]["takes"]!.Items[0].Str.ShouldStartWith("lunelle//Kits/rock/");
 	}
 
+	[Test]
+	public void An_edited_derived_patch_is_saved_as_what_it_changes_and_its_sets_stay_pinned()
+	{
+		var below = (JObject)JReader.Parse(SawLead);
+		var wanted = (JObject)below.Clone();
+		((JObject)wanted["filter"]!).Set("cutoff", new JNumber(1200));
+		((JArray)wanted["operators"]!).Values.RemoveAt(0);
+		((JArray)wanted["out"]!).Values.RemoveAt(0);
+		((JArray)wanted["operators"]!).Values.Insert(1, JReader.Parse("""{ "name": "saw3", "kind": "saw", "detune": -7 }"""));
+		((JArray)wanted["out"]!).Values.Add(JReader.Parse("""{ "op": "saw3" }"""));
+		var file = (JObject)JReader.Parse("""{ "format": "lunelle-patch/2", "base": "saw-lead", "set": { "sends.space": 0.2 } }""");
+		((JObject)wanted).Set("sends", JReader.Parse("""{ "space": 0.2 }"""));
+
+		var layer = OverrideDiff.Layer(below, wanted, OverrideSchema.Patch, file);
+		layer["base"]!.Str.ShouldBe("saw-lead");
+		layer["set"]!["filter.cutoff"]!.Num.ShouldBe("1200");
+		layer["remove"]!.Items.Select(r => r.Str).ShouldBe(["operators[sub]", "out[sub]"]);
+		layer["insert"]!.Items.Select(i => i["into"]!.Str).ShouldBe(["operators", "out"]);
+
+		var applied = (JObject)below.Clone();
+		var problems = new List<FormatProblem>();
+		Overrides.Apply(applied, layer, OverrideSchema.Patch, "lead", "lead", problems, []);
+		problems.ShouldBeEmpty();
+		applied.Same(wanted).ShouldBeTrue(applied.ToString());
+
+		// A set the file had stays, even once it equals the base
+		((JObject)below).Set("sends", JReader.Parse("""{ "space": 0.2 }"""));
+		OverrideDiff.Layer(below, wanted, OverrideSchema.Patch, file)["set"]!["sends.space"]!.Num.ShouldBe("0.2");
+	}
+
 	private const string Groove = """
 		{ "format": "lunelle-pattern/1", "kind": "beat", "about": "Kick on the beats", "step": "eighths", "rows": { "kick": "x.x.x.x.", "snare": "..x...x." } }
 		""";
