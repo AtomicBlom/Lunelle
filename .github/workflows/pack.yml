@@ -24,7 +24,10 @@ jobs:
       RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
       TEST_BUILD: ${{ github.ref == 'refs/heads/master' }}
     steps:
+      # With Git LFS: the library's sampled kits are audio kept there, which the package carries
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '11.0.x'
@@ -49,6 +52,13 @@ jobs:
 
       # LunelleVersion, not Version: a global Version would reach Sirrow's project too, and Lunelle's dependency would name
       # a Sirrow at Lunelle's version. Sirrow's checkout keeps its own (its Version.props).
+      # A package of pointers would play nothing: refuse one where any of the library's audio is still a pointer
+      - name: Check the library's audio is real
+        shell: bash
+        run: |
+          pointers="$(grep -rlI '^version https://git-lfs' BinaryVibrance.Lunelle/Library || true)"
+          if [ -n "$pointers" ]; then echo "Git LFS pointers, not audio:"; echo "$pointers"; exit 1; fi
+
       - name: Pack
         shell: bash
         run: |
