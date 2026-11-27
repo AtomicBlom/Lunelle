@@ -1,0 +1,9 @@
+{
+  "format": "lunelle/2",
+  "name": "hello-synth",
+  "title": "HelloSynth",
+  "about": "A music project to start from: a song, four patches and a kit, played from the workbench with nothing else.",
+  "macros": {
+    "bright": { "number": 0, "about": "Opens the lead's filter: duller at 0, brighter at 1" }
+  }
+}

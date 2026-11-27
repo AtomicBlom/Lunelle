@@ -24,6 +24,7 @@ public sealed class MusicPlayer : IDisposable
 	private readonly Dictionary<string, bool> _muted = [];
 	private readonly Dictionary<string, bool> _soloed = [];
 	private readonly Dictionary<string, float> _gainDb = [];
+	private readonly Dictionary<(string Track, int Macro), float> _held = [];
 	private readonly Dictionary<(string Section, string Placement), PlacementState> _forced = [];
 	private readonly List<AudioSource> _fading = [];
 	private readonly double _aheadSeconds;
@@ -253,6 +254,7 @@ public sealed class MusicPlayer : IDisposable
 		_muted.Clear();
 		_soloed.Clear();
 		_gainDb.Clear();
+		_held.Clear();
 		_forced.Clear();
 		_source = new MusicSource(state);
 		_played = _aheadSeconds > 0 ? new AheadSource(_audio, _source, _aheadSeconds) : _source;
@@ -431,6 +433,21 @@ public sealed class MusicPlayer : IDisposable
 	}
 
 	/// <summary>
+	/// Holds a track's macro at <paramref name="value"/> (0 to 1) over whatever its song makes it follow, a cue or a
+	/// section's sweep, until it is held at another or let go (null), when the song's own takes it back. From the next
+	/// block; kept, by the track's name, through a swap. A song export's macro events are this (exports.md §3).
+	/// </summary>
+	public void HoldMacro(SongTrack track, Macro macro, float? value)
+	{
+		var index = CheckTrack(track).Index;
+		if (value is { } held)
+			_held[(track.Name, macro.Id)] = held;
+		else
+			_held.Remove((track.Name, macro.Id));
+		Post(MusicCommandKind.HoldMacro, index, macro.Id, value ?? float.NaN);
+	}
+
+	/// <summary>
 	/// Holds a placement on or off whatever its condition, from the next bar line (or its next phrase), or back to
 	/// <see cref="PlacementState.Auto"/>. Kept, by its section's and its own name, through a swap.
 	/// </summary>
@@ -457,6 +474,8 @@ public sealed class MusicPlayer : IDisposable
 			var gain = Sirrow.Dsp.Units.DbToGain(_gainDb.GetValueOrDefault(name));
 			state.TrackGain[t] = gain;
 			state.Instruments[t].Gain = song.Tracks[t].Gain * gain;
+			for (var m = 0; m < Macro.Count; m++)
+				state.HeldMacros[t * Macro.Count + m] = _held.TryGetValue((name, m), out var held) ? held : float.NaN;
 		}
 		for (var s = 0; s < song.Sections.Length; s++)
 			for (var p = 0; p < song.Sections[s].Placements.Length; p++)
@@ -498,6 +517,9 @@ public sealed class MusicPlayer : IDisposable
 	}
 
 	private Song Playing => Song ?? throw new InvalidOperationException("No song is playing.");
+
+	// The source playing, for a song export to steer between blocks (SongExport)
+	internal MusicSource? Source => _source;
 
 	private SongTrack CheckTrack(SongTrack track)
 	{

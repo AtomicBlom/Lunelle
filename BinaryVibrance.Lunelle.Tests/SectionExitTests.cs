@@ -5,7 +5,7 @@ namespace BinaryVibrance.Lunelle.Tests;
 
 /// <summary>
 /// A section's exits and its passes as the music model has them: <c>pass</c> in a condition, read and written; exits in a
-/// <c>lunelle-song/2</c> file, read and written, and a <c>loom-song/1</c> file refused with how to move it; a part on one pass
+/// <c>lunelle-song/3</c> file, read and written; a part on one pass
 /// alone; where a placement is in its section, what it plays through it, and the notes a track sounds; a section's chords
 /// bar by bar.
 /// </summary>
@@ -21,7 +21,7 @@ public class SectionExitTests
 
 	private const string File = """
 		{
-		  "format": "lunelle-song/2",
+		  "format": "lunelle-song/3",
 		  "name": "exits",
 		  "tempo": 120,
 		  "scale": "C major",
@@ -86,27 +86,6 @@ public class SectionExitTests
 		var again = SongFile.Load(SongFile.Write(written), Bindings);
 		again.Sections[0].Exits.Count.ShouldBe(3);
 		again.Sections[1].Exits.ShouldHaveSingleItem().To.Name.ShouldBe("verse");
-	}
-
-	[Test]
-	public void A_version_1_file_is_refused_with_how_to_move_it()
-	{
-		var old = File.Replace("lunelle-song/2", "loom-song/1", StringComparison.Ordinal);
-		Should.Throw<FormatException>(() => SongFile.Load(old, Bindings)).Message.ShouldContain("\"exits\"");
-
-		var withOrder = File.Replace("\"sections\": [", "\"order\": [\"verse\"],\n  \"sections\": [", StringComparison.Ordinal);
-		Should.Throw<FormatException>(() => SongFile.Load(withOrder, Bindings)).Message.ShouldContain("\"exits\"");
-	}
-
-	[Test]
-	[Arguments("sirrow-song/2")]
-	[Arguments("loom-song/2")]
-	public void A_file_under_an_old_name_reads_as_the_new(string before)
-	{
-		SongFile.FormatsBefore.ShouldContain(before);
-		var old = File.Replace(SongFile.Format, before, StringComparison.Ordinal);
-		SongFile.Load(old, Bindings).Sections[0].Exits.Count.ShouldBe(3);
-		SongFile.ToJson(SongFile.Load(old, Bindings))["format"]!.GetValue<string>().ShouldBe(SongFile.Format);
 	}
 
 	[Test]

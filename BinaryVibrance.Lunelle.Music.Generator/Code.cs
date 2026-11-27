@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text;
 
+using BinaryVibrance.Lunelle.Music.Generator.Format;
+
 namespace BinaryVibrance.Lunelle.Music.Generator;
 
 /// <summary>Writing C#: names made identifiers, numbers made float literals, strings quoted, comments wrapped.</summary>

@@ -43,10 +43,15 @@ internal sealed class SongState
 		Soloed = new bool[song.Tracks.Length];
 		TrackGain = new float[song.Tracks.Length];
 		Array.Fill(TrackGain, 1f);
+		HeldMacros = new float[song.Tracks.Length * Macro.Count];
+		Array.Fill(HeldMacros, float.NaN);
 		Core = new ChipCore(song.ChipOptions);
 	}
 
 	public CompiledSong Song { get; }
+
+	// Each track's macros held by the game over what its song says (MusicPlayer.HoldMacro): NaN where none is
+	public float[] HeldMacros { get; }
 	public uint Seed { get; init; }              // what the song's variations are drawn from
 	public int[] SectionMap { get; set; } = [];   // a swap: each old section's index here, by name, or 0
 

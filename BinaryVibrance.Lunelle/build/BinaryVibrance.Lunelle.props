@@ -2,23 +2,49 @@
 
   <!--
     Imported into a project that takes the BinaryVibrance.Lunelle package, which carries the music generator as its analyzer
-    (analyzers/dotnet/cs): the MSBuild properties the generator reads, made visible to it. The project says which music
-    files it has, as AdditionalFiles:
+    (analyzers/dotnet/cs), and into one building Lunelle from source that imports it itself: the project's music handed to
+    the generator, in format 2 (docs/spec/project.md §7).
 
-      <AdditionalFiles Include="Patches\*.patch.json;Songs\*.song.json" />
+    A project with a lunelle.meta.json beside its .csproj has its music files (the manifest, Songs/, Patches/, Kits/,
+    Patterns/, Cues/ and any bundled Libraries/) and Lunelle's own sounds (the package's Library/, which a project lists
+    as "lunelle") as AdditionalFiles. A library by path outside the project is named, so its files are read too:
 
-    docs/synth.md, "Music as data", has the rest. A project building Lunelle from source references the generator itself
-    (OutputItemType="Analyzer") and declares these the same way.
+      <ItemGroup>
+        <LunelleLibrary Include="..\GameSounds" />
+      </ItemGroup>
+
+    docs/synth.md, "Music as data", has the rest.
   -->
+  <PropertyGroup>
+    <LunelleLibraryDir Condition="'$(LunelleLibraryDir)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\Library\'))</LunelleLibraryDir>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)\lunelle.meta.json')">
+    <AdditionalFiles Include="$(MSBuildProjectDirectory)\lunelle.meta.json" />
+    <AdditionalFiles Include="$(MSBuildProjectDirectory)\Songs\**\*.json;$(MSBuildProjectDirectory)\Patches\**\*.json;$(MSBuildProjectDirectory)\Kits\**\*.json" />
+    <AdditionalFiles Include="$(MSBuildProjectDirectory)\Patterns\**\*.json;$(MSBuildProjectDirectory)\Cues\**\*.json;$(MSBuildProjectDirectory)\Libraries\**\*.json" />
+    <AdditionalFiles Include="$(LunelleLibraryDir)**\*.json" />
+  </ItemGroup>
+
   <ItemGroup>
     <!-- The generated code's namespace, and a song's under it by its folder below the project -->
     <CompilerVisibleProperty Include="RootNamespace" />
     <CompilerVisibleProperty Include="ProjectDir" />
-    <!-- The classes a project's patches, kits, cues and macros are found in, where not Patches, Kits, Cues, Macros -->
+    <!-- Where Lunelle's own sounds are, the library "lunelle" -->
+    <CompilerVisibleProperty Include="LunelleLibraryDir" />
+    <!-- The classes a project's patches, kits, cues and macros are written into, where not Patches, Kits, Cues, Macros -->
     <CompilerVisibleProperty Include="LunelleMusicPatches" />
     <CompilerVisibleProperty Include="LunelleMusicKits" />
     <CompilerVisibleProperty Include="LunelleMusicCues" />
     <CompilerVisibleProperty Include="LunelleMusicMacros" />
   </ItemGroup>
+
+  <!-- Each library named by path: its JSON files, for the generator to read it as the project's manifest says -->
+  <Target Name="AddLunelleLibraries" BeforeTargets="GenerateMSBuildEditorConfigFileShouldRun;CoreCompile" Condition="'@(LunelleLibrary)' != ''">
+    <ItemGroup>
+      <_LunelleLibraryFile Include="%(LunelleLibrary.FullPath)\**\*.json" />
+      <AdditionalFiles Include="@(_LunelleLibraryFile)" />
+    </ItemGroup>
+  </Target>
 
 </Project>

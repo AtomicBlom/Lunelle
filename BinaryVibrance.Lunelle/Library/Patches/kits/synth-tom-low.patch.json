@@ -1,0 +1,6 @@
+{
+  "format": "lunelle-patch/2",
+  "operators": [{ "name": "sine1", "kind": "sine", "fixed": 95, "envelope": "decay 0.3" }],
+  "out": [{ "op": "sine1" }],
+  "pitchDrop": { "semitones": 7, "seconds": 0.05 }
+}

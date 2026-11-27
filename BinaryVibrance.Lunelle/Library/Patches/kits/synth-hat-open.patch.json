@@ -1,0 +1,6 @@
+{
+  "format": "lunelle-patch/2",
+  "operators": [{ "name": "noise1", "kind": "noise", "envelope": "decay 0.35", "level": 0.5 }],
+  "out": [{ "op": "noise1" }],
+  "filter": { "kind": "highPass", "cutoff": 7000 }
+}

@@ -1,47 +1,47 @@
-using System.Text.Json;
+using System.Text;
 
 using BinaryVibrance.Lunelle.Chip;
+using BinaryVibrance.Lunelle.Format;
 
 namespace BinaryVibrance.Lunelle.Music;
 
 /// <summary>
-/// A music project of files alone, with no code: its songs (<c>*.song.json</c>), patches (<c>*.patch.json</c>), kits
-/// (<c>kit.json</c> or <c>*.kit.json</c>) and, in <c>lunelle-project.json</c> at its root, the cues and macros its songs
-/// name, which a project with code declares in C#. Everything is read through a function given a path, so a folder on
-/// disk, a zip or a browser's storage load alike. What a song file names as code (a part, a placement, a hook) has none
-/// here: a part or a placement plays a <see cref="Rest"/>, a hook doesn't run, and <see cref="CodeIn"/> says which.
+/// A music project of files alone, with no code, in format 2 (docs/spec/project.md): a <c>lunelle.meta.json</c>, its
+/// songs, patches, kits, patterns and cue files by their paths, and the libraries it references, Lunelle's own
+/// (<c>lunelle:</c>) among them. Every song is resolved as it loads (<see cref="Resolver"/>): its sounds found, its base
+/// chains applied, its patterns written in, its cues imported. Everything is read through an <see cref="IProjectSource"/>,
+/// so a folder on disk, a <c>.lunelle</c> file, embedded resources or a browser's storage load alike. What a song names as
+/// code (a part, a placement, a hook) has none here: a part or a placement plays a <see cref="Rest"/>, a hook doesn't
+/// run, and <see cref="CodeIn"/> says which.
 /// </summary>
 /// <remarks>
-/// A song or patch is named as the generator names it from the same files: a patch by its file
-/// (<c>electric-piano.patch.json</c> is "electric-piano"), a song and a kit by the <c>"name"</c> inside. A file that can't be
-/// read is left out and said in <see cref="Problems"/>, so one broken file doesn't close the rest.
+/// An entry's id is its path below its kind's folder (<c>Patches/bass/sub.patch.json</c> is <c>bass/sub</c>), and that
+/// is its name here. A file that can't be read or resolved is left out and said in <see cref="Problems"/>, so one broken
+/// file doesn't close the rest.
 /// </remarks>
 public sealed class MusicFolder
 {
-	/// <summary>The file at a project's root that declares its cues and macros.</summary>
-	public const string ProjectFileName = "lunelle-project.json";
+	/// <summary>The manifest at a project's root.</summary>
+	public const string ProjectFileName = EntryIds.Manifest;
 
-	/// <summary>The format <see cref="ProjectFileName"/> says it is.</summary>
-	public const string ProjectFormat = "lunelle-project/1";
+	/// <summary>The format the manifest says it is.</summary>
+	public const string ProjectFormat = EntryIds.ManifestFormat;
 
-	private readonly Dictionary<string, string> _songText = new(StringComparer.Ordinal);
-	private readonly Dictionary<string, string> _songPath = new(StringComparer.Ordinal);
-	private readonly Dictionary<string, string> _patchText = new(StringComparer.Ordinal);
-	private readonly Dictionary<string, string> _patchPath = new(StringComparer.Ordinal);
-	private readonly Dictionary<string, Lazy<DrumKit>> _kits = new(StringComparer.Ordinal);
-	private readonly Dictionary<string, string> _kitPath = new(StringComparer.Ordinal);
-	private readonly Dictionary<string, IReadOnlyList<string>> _code = new(StringComparer.Ordinal);
+	private readonly Dictionary<string, ResolvedSong> _songs = new(StringComparer.Ordinal);
+	private readonly Dictionary<string, CueBase> _cues = new(StringComparer.Ordinal);
 	private readonly Dictionary<string, Macro> _macros = new(StringComparer.Ordinal);
-	private readonly List<CueBase> _cues = [];
+	private readonly Dictionary<string, Lazy<DrumKit>> _kitCache = new(StringComparer.Ordinal);
 	private readonly List<string> _problems = [];
 
-	private MusicFolder()
+	private MusicFolder(LoadedProject project)
 	{
+		Project = project;
+		Resolver = new Resolver(project);
 		Bindings = new SongBindings
 		{
-			Patch = name => _patchText.TryGetValue(name, out var text) ? PatchFile.Load(text) : null,
-			Kit = name => _kits.TryGetValue(name, out var kit) ? kit.Value : null,
-			Cue = name => _cues.Find(c => c.Name == name),
+			Patch = name => Find(EntryKind.Patch, name) is { } patch ? BuildPatch(patch) : null,
+			Kit = name => Find(EntryKind.Kit, name) is { } kit ? BuildKit(kit, "") : null,
+			Cue = name => Resolver.FindCue(project.Root, name, out _) is { } found ? CueFor(found.Cue, found.Owner) : null,
 			Macro = name => _macros.TryGetValue(name, out var macro) ? macro : null,
 			Part = _ => Rest.Bar,
 			Placement = (_, section, track) => section.Play(track, Rest.Bar),
@@ -49,44 +49,66 @@ public sealed class MusicFolder
 		};
 	}
 
-	/// <summary>The project's name, from <see cref="ProjectFileName"/>, or null when it gives none.</summary>
-	public string? Name { get; private set; }
+	/// <summary>The project and its libraries as loaded.</summary>
+	public LoadedProject Project { get; }
 
-	/// <summary>The cues its songs listen to, as <see cref="ProjectFileName"/> declares them.</summary>
-	public IReadOnlyList<CueBase> Cues => _cues;
+	/// <summary>The resolver its songs, patches and kits were resolved with.</summary>
+	public Resolver Resolver { get; }
+
+	/// <summary>The project's name (its id as a library), from its manifest.</summary>
+	public string? Name => Project.Root.Manifest.Name.Length > 0 ? Project.Root.Manifest.Name : null;
+
+	/// <summary>Its title for people: the manifest's <c>"title"</c>, else its name.</summary>
+	public string? Title => Project.Root.Manifest.Title ?? Name;
+
+	/// <summary>
+	/// The cues its songs can listen to: the project's own, by id, then those its songs import from libraries, by the
+	/// name each is known by at run time (<c>game:intensity</c>).
+	/// </summary>
+	public IReadOnlyList<CueBase> Cues { get; private set; } = [];
 
 	/// <summary>Its macros by the names its songs give them.</summary>
 	public IReadOnlyDictionary<string, Macro> Macros => _macros;
 
-	/// <summary>Its songs by name, each built afresh from its file whenever asked.</summary>
+	/// <summary>Its songs by id, in the manifest's order and then by id, each built afresh whenever asked.</summary>
 	public IReadOnlyList<(string Name, Func<Song> Build)> Songs { get; private set; } = [];
 
-	/// <summary>Its patches by name, each built afresh from its file whenever asked.</summary>
+	/// <summary>Its own patches by id, each resolved and built afresh whenever asked.</summary>
 	public IReadOnlyList<(string Name, Func<Patch> Build)> Patches { get; private set; } = [];
 
-	/// <summary>Its kits by name, each loaded once, on first asking (a sampled kit decodes all its takes).</summary>
+	/// <summary>Its own kits by id, each loaded once, on first asking (a sampled kit decodes all its takes).</summary>
 	public IReadOnlyList<(string Name, Func<DrumKit> Build)> Kits { get; private set; } = [];
 
-	/// <summary>What binds the names in its song files: the folder's patches, kits, cues and macros, code as rests.</summary>
+	/// <summary>What binds the names a song written in the project's own context uses: its patches, kits, cues and macros, code as rests.</summary>
 	public SongBindings Bindings { get; }
 
-	/// <summary>Each file that couldn't be read, and why, as a line naming it.</summary>
+	/// <summary>Each problem found loading and resolving it, as a line naming its file.</summary>
 	public IReadOnlyList<string> Problems => _problems;
 
-	/// <summary>The song file named <paramref name="song"/>'s path as the folder was given it, or null.</summary>
-	public string? SongPath(string song) => _songPath.GetValueOrDefault(song);
+	/// <summary>Each problem found loading and resolving it, with where in its file.</summary>
+	public IReadOnlyList<FormatProblem> Diagnostics { get; private set; } = [];
 
-	/// <summary>The patch file named <paramref name="patch"/>'s path as the folder was given it, or null.</summary>
-	public string? PatchPath(string patch) => _patchPath.GetValueOrDefault(patch);
+	/// <summary>The song <paramref name="song"/>'s path in the project, or null.</summary>
+	public string? SongPath(string song) => Project.Root.Entry(EntryKind.Song, song)?.Path;
 
-	/// <summary>The kit named <paramref name="kit"/>'s manifest path as the folder was given it, or null.</summary>
-	public string? KitPath(string kit) => _kitPath.GetValueOrDefault(kit);
+	/// <summary>The patch <paramref name="patch"/>'s path in the project, or null (for one in a library too).</summary>
+	public string? PatchPath(string patch) => Project.Root.Entry(EntryKind.Patch, patch)?.Path;
+
+	/// <summary>The kit <paramref name="kit"/>'s file's path in the project, or null.</summary>
+	public string? KitPath(string kit) => Project.Root.Entry(EntryKind.Kit, kit)?.Path;
+
+	/// <summary>Song <paramref name="song"/> resolved, or null for no such song.</summary>
+	public ResolvedSong? Resolved(string song) => _songs.TryGetValue(song, out var resolved) ? resolved : null;
+
+	/// <summary>The cues song <paramref name="song"/> imports, in order, as it plays them: none for no such song.</summary>
+	public IReadOnlyList<(ImportedCue Import, CueBase Cue)> CuesOf(string song) =>
+		_songs.TryGetValue(song, out var resolved) ? [.. resolved.Cues.Select(c => (c, CueFor(c.Definition, c.Owner)))] : [];
 
 	/// <summary>
 	/// What song <paramref name="song"/>'s file names as code, which plays nothing here: <c>"part Drums"</c>,
 	/// <c>"placement Fill"</c>, <c>"hook OnBuilt"</c>. Empty for a song that is data throughout, or no song.
 	/// </summary>
-	public IReadOnlyList<string> CodeIn(string song) => _code.GetValueOrDefault(song) ?? [];
+	public IReadOnlyList<string> CodeIn(string song) => _songs.TryGetValue(song, out var resolved) ? Code(resolved.Json) : [];
 
 	/// <summary>The name its songs give macro <paramref name="id"/>, or null when they give it none.</summary>
 	public string? MacroName(int id)
@@ -97,246 +119,215 @@ public sealed class MusicFolder
 		return null;
 	}
 
-	/// <summary>The music in the folder at <paramref name="directory"/>, every file under it.</summary>
+	/// <summary>The music in the folder at <paramref name="directory"/>, with Lunelle's own library.</summary>
 	/// <exception cref="DirectoryNotFoundException">There is no such folder.</exception>
-	public static MusicFolder FromDirectory(string directory)
-	{
-		ArgumentNullException.ThrowIfNull(directory);
-		var root = Path.GetFullPath(directory);
-		if (!Directory.Exists(root))
-			throw new DirectoryNotFoundException($"There is no folder {root}.");
-		var files = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
-			.Select(f => Path.GetRelativePath(root, f).Replace('\\', '/'))
-			.Where(f => !f.StartsWith("bin/", StringComparison.Ordinal) && !f.StartsWith("obj/", StringComparison.Ordinal));
-		return Load(files, path => File.ReadAllBytes(Path.Combine(root, path)));
-	}
+	public static MusicFolder FromDirectory(string directory) => Load(new DirectorySource(directory));
+
+	/// <summary>
+	/// The music in a <c>.lunelle</c> file, read as it is without unpacking it (project.md §6.3): what a player opens. Its
+	/// libraries are bundled in it; Lunelle's own is there too for one that isn't.
+	/// </summary>
+	/// <exception cref="InvalidDataException">It isn't a <c>.lunelle</c> file, or holds a path that would leave it.</exception>
+	public static MusicFolder FromPackage(byte[] package, string location = "the .lunelle file") => Load(ZipSource.Read(package, location));
 
 	/// <summary>
 	/// The music among <paramref name="files"/> (paths relative to the project's root, <c>/</c> between folders), each read
-	/// through <paramref name="read"/> by its path as given.
+	/// through <paramref name="read"/> by its path as given, with Lunelle's own library.
 	/// </summary>
-	public static MusicFolder Load(IEnumerable<string> files, Func<string, byte[]> read)
+	public static MusicFolder Load(IEnumerable<string> files, Func<string, byte[]> read) => Load(new MemorySource(files, read));
+
+	/// <summary>The music in <paramref name="source"/>, its host libraries from <paramref name="host"/> (Lunelle's own, by default).</summary>
+	public static MusicFolder Load(IProjectSource source, Func<string, IProjectSource?>? host = null)
 	{
-		ArgumentNullException.ThrowIfNull(files);
-		ArgumentNullException.ThrowIfNull(read);
-		var folder = new MusicFolder();
-		var all = files.Select(f => f.Replace('\\', '/')).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
-
-		string? Text(string path)
-		{
-			try
-			{
-				return System.Text.Encoding.UTF8.GetString(read(path));
-			}
-			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or KeyNotFoundException or ArgumentException)
-			{
-				folder._problems.Add($"{path}: can't be read: {ex.Message}");
-				return null;
-			}
-		}
-
-		if (all.Contains(ProjectFileName) && Text(ProjectFileName) is { } project)
-			folder.ReadProject(project);
-
-		var patches = new List<(string, Func<Patch>)>();
-		foreach (var path in all.Where(f => f.EndsWith(".patch.json", StringComparison.OrdinalIgnoreCase)))
-		{
-			if (Text(path) is not { } text)
-				continue;
-			var name = Stem(path);
-			try
-			{
-				PatchFile.Read(text);
-			}
-			catch (Exception ex) when (ex is FormatException or PatchException or JsonException or ArgumentException)
-			{
-				folder._problems.Add($"{path}: {ex.Message}");
-				continue;
-			}
-			if (!folder._patchText.TryAdd(name, text))
-			{
-				folder._problems.Add($"{path}: another patch file is named '{name}' too ({folder._patchPath[name]}); this one is left out.");
-				continue;
-			}
-			folder._patchPath[name] = path;
-			patches.Add((name, () => PatchFile.Load(text)));
-		}
-		folder.Patches = patches;
-
-		var kits = new List<(string, Func<DrumKit>)>();
-		foreach (var path in all.Where(f => Path.GetFileName(f) is var file
-			&& (file.Equals("kit.json", StringComparison.OrdinalIgnoreCase) || file.EndsWith(".kit.json", StringComparison.OrdinalIgnoreCase))))
-		{
-			if (Text(path) is not { } text)
-				continue;
-			string? name;
-			try
-			{
-				using var document = PatchFile.Parse(text);
-				name = PatchFile.String(document.RootElement, "name");
-			}
-			catch (Exception ex) when (ex is JsonException or FormatException)
-			{
-				folder._problems.Add($"{path}: {ex.Message}");
-				continue;
-			}
-			if (string.IsNullOrWhiteSpace(name))
-			{
-				folder._problems.Add($"{path}: a kit has a \"name\".");
-				continue;
-			}
-			if (folder._kits.ContainsKey(name))
-			{
-				folder._problems.Add($"{path}: another kit is named '{name}' too ({folder._kitPath[name]}); this one is left out.");
-				continue;
-			}
-			var kitPath = path;
-			var kit = new Lazy<DrumKit>(() => DrumKit.Load(read, kitPath, folder.Bindings.Patch));
-			folder._kits[name] = kit;
-			folder._kitPath[name] = path;
-			kits.Add((name, () => kit.Value));
-		}
-		folder.Kits = kits;
-
-		var songs = new List<(string, Func<Song>)>();
-		foreach (var path in all.Where(f => f.EndsWith(".song.json", StringComparison.OrdinalIgnoreCase)))
-		{
-			if (Text(path) is not { } text)
-				continue;
-			string? name;
-			List<string> code;
-			try
-			{
-				using var document = PatchFile.Parse(text);
-				name = PatchFile.String(document.RootElement, "name");
-				code = Code(document.RootElement);
-			}
-			catch (Exception ex) when (ex is JsonException or FormatException)
-			{
-				folder._problems.Add($"{path}: {ex.Message}");
-				continue;
-			}
-			if (string.IsNullOrWhiteSpace(name))
-			{
-				folder._problems.Add($"{path}: a song file has a \"name\".");
-				continue;
-			}
-			if (!folder._songText.TryAdd(name, text))
-			{
-				folder._problems.Add($"{path}: another song is named '{name}' too ({folder._songPath[name]}); this one is left out.");
-				continue;
-			}
-			folder._songPath[name] = path;
-			folder._code[name] = code;
-			songs.Add((name, () => SongFile.Load(text, folder.Bindings)));
-		}
-		folder.Songs = songs;
+		ArgumentNullException.ThrowIfNull(source);
+		var folder = new MusicFolder(ProjectLoader.Load(source, host ?? BuiltInLibrary.Host));
+		folder.Fill();
 		return folder;
 	}
 
-	// lunelle-project/1: { "format", "name", "cues": [{ "name", "initial" } or { "name", "options": [...], "initial" }],
-	// "macros": { "bright": 0 } }
-	private void ReadProject(string text)
+	private void Fill()
 	{
-		void Problem(string message) => _problems.Add($"{ProjectFileName}: {message}");
-		JsonDocument document;
+		var root = Project.Root;
+		foreach (var (name, number, _) in root.Manifest.Macros)
+			_macros[name] = new Macro(number);
+
+		var cues = new List<CueBase>();
+		foreach (var cue in root.Cues.Values.OrderBy(c => c.Id, StringComparer.Ordinal))
+			cues.Add(CueFor(cue, root));
+
+		var order = root.Manifest.Songs.Where(id => root.Entry(EntryKind.Song, id) is not null).ToList();
+		order.AddRange(root.Entries(EntryKind.Song).Keys.Where(id => !order.Contains(id)).Order(StringComparer.Ordinal));
+		var songs = new List<(string, Func<Song>)>();
+		foreach (var id in order)
+		{
+			var resolved = Resolver.Song(root.Entry(EntryKind.Song, id)!);
+			_songs[id] = resolved;
+			foreach (var import in resolved.Cues)
+				if (import.Owner != root && !cues.Contains(CueFor(import.Definition, import.Owner)))
+					cues.Add(CueFor(import.Definition, import.Owner));
+			songs.Add((id, () => BuildSong(resolved)));
+		}
+		Songs = songs;
+		Cues = cues;
+
+		Patches = [.. root.Entries(EntryKind.Patch).Keys.Order(StringComparer.Ordinal)
+			.Select(id => (id, (Func<Patch>)(() => BuildPatch(Find(EntryKind.Patch, id) ?? throw new FormatException($"The patch '{id}' can't be resolved.")))))];
+		Kits = [.. root.Entries(EntryKind.Kit).Keys.Order(StringComparer.Ordinal)
+			.Select(id => (id, (Func<DrumKit>)(() => BuildKit(Find(EntryKind.Kit, id) ?? throw new FormatException($"The kit '{id}' can't be resolved."), ""))))];
+
+		// Resolve every entry of the project's own once, so each problem is said as it loads
+		foreach (var kind in new[] { EntryKind.Patch, EntryKind.Kit })
+			foreach (var entry in root.Entries(kind).Values)
+				Resolver.Resolve(entry);
+		foreach (var pattern in root.Entries(EntryKind.Pattern).Values)
+			Resolver.Pattern(pattern);
+
+		var all = Project.Problems.Concat(Resolver.Problems).ToList();
+		Diagnostics = all;
+		_problems.AddRange(all.Select(p => p.ToString()));
+	}
+
+	// A patch or kit a reference names in the project's own context, resolved; null when there is none or it failed
+	private ResolvedEntry? Find(EntryKind kind, string reference) =>
+		Resolver.Find(Project.Root, kind, reference, out _) is { } file ? Resolver.Resolve(file) : null;
+
+	/// <summary>
+	/// Song <paramref name="id"/> built from <paramref name="text"/> in place of its file, as an editor has it: resolved as
+	/// that file would be (its sounds, its patterns, its cues), its bindings passed through <paramref name="wrap"/> to be
+	/// watched or changed. What the resolver finds wrong in it is an error.
+	/// </summary>
+	/// <exception cref="FormatException">The text has an error, or names something the project doesn't have.</exception>
+	/// <exception cref="NotationException">A part's notation has a mistake.</exception>
+	public Song BuildSong(string id, string text, Func<SongBindings, SongBindings>? wrap = null)
+	{
+		var (resolved, problem) = Resolve(id, text);
+		if (problem is not null)
+			throw new FormatException($"Song '{id}': {problem.Message}.");
+		return BuildSong(resolved, wrap);
+	}
+
+	/// <summary>
+	/// Song <paramref name="id"/> resolved from <paramref name="text"/> in place of its file, as an editor has it, and the
+	/// first error resolving it found, or null: what a pattern a part plays writes into it, say.
+	/// </summary>
+	/// <exception cref="FormatException">The text isn't a JSON object.</exception>
+	public (ResolvedSong Song, FormatProblem? Problem) Resolve(string id, string text)
+	{
+		ArgumentNullException.ThrowIfNull(text);
+		JNode json;
 		try
 		{
-			document = PatchFile.Parse(text);
+			json = JReader.Parse(text);
 		}
-		catch (JsonException ex)
+		catch (FormatError error)
 		{
-			Problem(ex.Message);
-			return;
+			throw new FormatException($"Song '{id}': {error.Message}.", error);
 		}
-		using (document)
+		if (json is not JObject root)
+			throw new FormatException($"Song '{id}' isn't a JSON object.");
+		var path = SongPath(id) ?? EntryIds.Folder(EntryKind.Song) + id + EntryIds.Suffix(EntryKind.Song);
+		// A resolver of its own, so an edit's problems are this build's alone
+		var resolver = new Resolver(Project);
+		var resolved = resolver.Song(new EntryFile(Project.Root, EntryKind.Song, id, path, root));
+		return (resolved, resolver.Problems.FirstOrDefault(p => !p.IsWarning));
+	}
+
+	private Song BuildSong(ResolvedSong resolved, Func<SongBindings, SongBindings>? wrap = null)
+	{
+		var song = resolved.File.Id;
+		var bindings = new SongBindings
 		{
-			var root = document.RootElement;
-			if (PatchFile.String(root, "format") is var format && format != ProjectFormat)
+			Patch = key => resolved.Patches.TryGetValue(key, out var patch) ? BuildPatch(patch) : null,
+			Kit = key => resolved.Kits.TryGetValue(key, out var kit) ? BuildKit(kit, key.StartsWith('~') ? song : "") : null,
+			Cue = reference =>
 			{
-				Problem($"it says \"format\": \"{format}\"; this reads \"{ProjectFormat}\".");
-				return;
-			}
-			Name = PatchFile.String(root, "name");
-			foreach (var cue in PatchFile.Array(root, "cues"))
-			{
-				var name = PatchFile.String(cue, "name");
-				if (string.IsNullOrWhiteSpace(name))
-				{
-					Problem("a cue has a \"name\".");
-					continue;
-				}
-				if (_cues.Exists(c => c.Name == name))
-				{
-					Problem($"two cues are named '{name}'.");
-					continue;
-				}
-				try
-				{
-					if (cue.TryGetProperty("options", out var options))
-					{
-						var names = options.ValueKind == JsonValueKind.Array
-							? options.EnumerateArray().Select(o => o.GetString() ?? "").ToList()
-							: throw new ArgumentException($"cue '{name}': its \"options\" are a list of names.");
-						_cues.Add(new ChoiceCue(name, names, PatchFile.String(cue, "initial")));
-					}
-					else
-						_cues.Add(new Cue(name, PatchFile.Float(cue, "initial") ?? 0f));
-				}
-				catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
-				{
-					Problem(ex.Message);
-				}
-			}
-			if (root.TryGetProperty("macros", out var macros))
-			{
-				if (macros.ValueKind != JsonValueKind.Object)
-				{
-					Problem("its \"macros\" are an object of names and numbers: { \"bright\": 0 }.");
-					return;
-				}
-				foreach (var macro in macros.EnumerateObject())
-				{
-					if (macro.Value.ValueKind != JsonValueKind.Number || !macro.Value.TryGetInt32(out var id) || id < 0 || id >= Macro.Count)
-						Problem($"macro '{macro.Name}' is {macro.Value}, and a macro is a number from 0 to {Macro.Count - 1}.");
-					else if (MacroName(id) is { } other)
-						Problem($"macro '{macro.Name}' is {id}, which '{other}' is already.");
-					else
-						_macros[macro.Name] = new Macro(id);
-				}
-			}
+				if (resolved.Cue(reference) is { } import)
+					return CueFor(import.Definition, import.Owner);
+				if (Resolver.FindCue(resolved.File.Owner, reference, out _) is not null)
+					throw new FormatException($"Song '{song}' reads the cue '{reference}', which it doesn't import: add it to the song's \"cues\".");
+				return null;
+			},
+			Macro = name => _macros.TryGetValue(name, out var macro) ? macro : null,
+			Part = _ => Rest.Bar,
+			Placement = (_, section, track) => section.Play(track, Rest.Bar),
+			Hook = (_, _, _) => { },
+		};
+		return SongFile.Load(resolved.Json.ToString(), wrap?.Invoke(bindings) ?? bindings);
+	}
+
+	private static Patch BuildPatch(ResolvedEntry patch)
+	{
+		if (!patch.Ok)
+			throw new FormatException($"The patch '{patch.Key}' can't be built: its file has errors.");
+		try
+		{
+			return PatchFile.Load(patch.Json.ToString());
+		}
+		catch (Exception ex) when (ex is FormatException or PatchException && patch.Layers.Count > 1)
+		{
+			// A derived patch's error may come from any layer: name them all (overrides.md §5)
+			throw new FormatException($"The patch '{patch.Key}', made of {string.Join(" → ", patch.Layers.Select(l => l.Key))}, can't be built: {ex.Message}", ex);
 		}
 	}
 
-	// What a song file names as code: each part, placement and hook
-	private static List<string> Code(JsonElement root)
+	// A kit, loaded once per key (a song's own kit once per song), its takes read from wherever each layer named them
+	private DrumKit BuildKit(ResolvedEntry kit, string song)
+	{
+		if (!kit.Ok)
+			throw new FormatException($"The kit '{kit.Key}' can't be built: its file has errors.");
+		var cacheKey = song + "|" + kit.Key;
+		if (!_kitCache.TryGetValue(cacheKey, out var made))
+		{
+			var manifest = Encoding.UTF8.GetBytes(kit.Json.ToString());
+			made = new Lazy<DrumKit>(() => DrumKit.Load(path =>
+			{
+				if (path == "kit.json")
+					return manifest;
+				var (library, inside) = Resolver.Unlocate(path);
+				return (Resolver.Library(library) ?? throw new KeyNotFoundException($"No library holds {path}.")).Source.ReadBytes(inside);
+			}, "kit.json", key => kit.Patches.TryGetValue(key, out var patch) ? BuildPatch(patch) : null));
+			_kitCache[cacheKey] = made;
+		}
+		return made.Value;
+	}
+
+	// One runtime cue for each name: a library's cue reached by two routes is one cue
+	private CueBase CueFor(CueDefinition definition, ProjectLibrary owner)
+	{
+		var name = owner.RuntimeCueName(definition.Id);
+		if (_cues.TryGetValue(name, out var cue))
+			return cue;
+		cue = definition.IsChoice
+			? new ChoiceCue(name, [.. definition.Options.Select(o => o.Name)], definition.Options[definition.InitialOption].Name)
+			: new Cue(name, (float)definition.InitialLevel);
+		_cues[name] = cue;
+		return cue;
+	}
+
+	// What a song names as code: each part, placement and hook
+	private static List<string> Code(JObject song)
 	{
 		var code = new List<string>();
-		void Part(JsonElement part)
+		void Part(JNode part)
 		{
-			if (PatchFile.Object(part, "part") is { } named && PatchFile.String(named, "code") is { } name)
+			if (part["part"]?["code"]?.Str is { } name)
 				code.Add($"part {name}");
-			if (PatchFile.Object(part, "endWith") is { } fill)
+			if (part["endWith"] is { } fill)
 				Part(fill);
+			foreach (var item in part["sequence"]?.Items ?? [])
+				Part(item);
 		}
-		foreach (var section in PatchFile.Array(root, "sections"))
-			foreach (var part in PatchFile.Array(section, "parts"))
+		foreach (var section in song["sections"]?.Items ?? [])
+			foreach (var part in section["parts"]?.Items ?? [])
 			{
-				if (PatchFile.String(part, "code") is { } placement)
+				if (part["code"]?.Str is { } placement)
 					code.Add($"placement {placement}");
 				else
 					Part(part);
 			}
-		foreach (var hook in PatchFile.Array(root, "hooks"))
-			code.Add($"hook {hook.GetString()}");
+		foreach (var hook in song["hooks"]?.Items ?? [])
+			if (hook.Str is { } name)
+				code.Add($"hook {name}");
 		return [.. code.Distinct(StringComparer.Ordinal)];
-	}
-
-	// "Patches/electric-piano.patch.json" is "electric-piano"
-	private static string Stem(string path)
-	{
-		var name = Path.GetFileName(path);
-		var at = name.IndexOf('.', StringComparison.Ordinal);
-		return at < 0 ? name : name[..at];
 	}
 }

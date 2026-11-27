@@ -15,7 +15,10 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
+      # With Git LFS: the library's sampled kits are audio kept there, and a checkout without it has their pointers
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       # Sirrow, which Lunelle builds on, from a checkout beside this one (..\Sirrow, where build/Sirrow.Source.props
       # looks): its master branch. A change here that needs one there passes once that one is merged.

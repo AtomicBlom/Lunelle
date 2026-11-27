@@ -14,6 +14,17 @@
 		<PackageTags>audio;synthesis;fm;music;sequencer;gamedev;dotnet</PackageTags>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 	</PropertyGroup>
+	<!--
+		Lunelle's own sounds, the built-in library a project references as "lunelle" (Format/BuiltInLibrary.cs): a project of
+		files, embedded, so every host has it without a folder beside the app. The library's files aren't code.
+	-->
+	<ItemGroup>
+		<EmbeddedResource Include="Library\**\*" LogicalName="library/%(RecursiveDir)%(Filename)%(Extension)" />
+		<None Remove="Library\**\*" />
+		<!-- And beside the package's build props, for a project with code to hand its generator (build/BinaryVibrance.Lunelle.props) -->
+		<None Include="Library\**\*" Pack="true" PackagePath="Library" Visible="false" />
+	</ItemGroup>
+
 	<ItemGroup>
 		<InternalsVisibleTo Include="BinaryVibrance.Lunelle.Tests" />
 		<InternalsVisibleTo Include="BinaryVibrance.LunelleStudio.Tests" />

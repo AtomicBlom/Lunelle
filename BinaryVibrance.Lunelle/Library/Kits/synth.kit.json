@@ -1,0 +1,15 @@
+{
+  "format": "lunelle-kit/1",
+  "about": "A light kit made of patches, so nothing waits for samples: a sine kick dropping onto 50 Hz, a tone under noise for the snare, noise hats, toms and cymbals",
+  "pieces": [
+    { "piece": "kick", "patch": "kits/synth-kick" },
+    { "piece": "snare", "patch": "kits/synth-snare" },
+    { "piece": "hat-closed", "patch": "kits/synth-hat-closed", "choke": 1 },
+    { "piece": "hat-open", "patch": "kits/synth-hat-open", "choke": 1 },
+    { "piece": "tom-high", "patch": "kits/synth-tom-high" },
+    { "piece": "tom-mid", "patch": "kits/synth-tom-mid" },
+    { "piece": "tom-low", "patch": "kits/synth-tom-low" },
+    { "piece": "crash", "patch": "kits/synth-crash" },
+    { "piece": "ride", "patch": "kits/synth-ride" }
+  ]
+}

@@ -2,9 +2,9 @@
 
 	<!--
 		A music project to start from, and the one lunelle-studio's "new" makes: a song, four patches and a kit, written in
-		the workbench and played from it with nothing else: open it with lunelle-studio, as README.md says. Its song and
-		patches are files (Songs/*.song.json, Patches/*.patch.json) that Lunelle's music generator makes into C# as it builds;
-		what a file can't say (the kit, the cues, the catalog) is C# here.
+		the workbench and played from it with nothing else: open it with lunelle-studio, as README.md says. Its music is files
+		(lunelle.meta.json, Songs/, Patches/, Cues/) that Lunelle's music generator makes into C# as it builds; what a file
+		can't say (the kit and the catalog) is C# here.
 	-->
 	<PropertyGroup>
 		<TargetFramework>net11.0</TargetFramework>
@@ -17,11 +17,10 @@
 		<ProjectReference Include="..\..\BinaryVibrance.Lunelle\BinaryVibrance.Lunelle.csproj" />
 	</ItemGroup>
 
-	<!-- The music as data: the generator makes C# of each file as the project builds -->
+	<!-- The music as data (lunelle.meta.json and its folders, and Lunelle's own sounds): the generator makes C# of it as
+	     the project builds. A project taking the BinaryVibrance.Lunelle package gets both from the package -->
+	<Import Project="..\..\BinaryVibrance.Lunelle\build\BinaryVibrance.Lunelle.props" />
 	<ItemGroup>
-		<AdditionalFiles Include="Patches\*.patch.json;Songs\*.song.json" />
-		<CompilerVisibleProperty Include="RootNamespace" />
-		<CompilerVisibleProperty Include="ProjectDir" />
 		<ProjectReference Include="..\..\BinaryVibrance.Lunelle.Music.Generator\BinaryVibrance.Lunelle.Music.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
 	</ItemGroup>
 

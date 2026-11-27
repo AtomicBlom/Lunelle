@@ -666,17 +666,49 @@ The mutes, solos, gains and forced placements carry over by name.
 
 ## 6. Music as data
 
-A patch or a song can be a file rather than code: JSON a tool writes and reads back exactly, which Lunelle's music
-generator turns into the C# a person would have written as the project builds. The game builds and runs the C#, so
-NativeAOT and the browser are as they were; the workbench edits the files.
+A project's music can be files rather than code: JSON a tool writes and reads back exactly. A project of files alone
+plays as it is (`MusicFolder`); in a project with code, Lunelle's music generator turns the same files into the C# a
+person would have written as the project builds, so NativeAOT and the browser are as they were. Both read the files
+through **one resolver**, so a project plays the same either way. This is **format 2**; its specifications are in
+[`docs/spec/`](spec/README.md), and what follows is the tour.
 
-**`lunelle-patch/1`** (`PatchFile`): a `PatchSpec` as JSON. Each operator is named and routed by name, and only what differs
-from a new spec's defaults is written, so `Write` then `Read` gives back the same spec, float for float.
+### A project
+
+```
+lunelle.meta.json              the manifest: the project's name, its libraries, its macros, its songs' order, its album
+Songs/**/*.song.json           songs (lunelle-song/3)
+Patches/**/*.patch.json        patches (lunelle-patch/2)
+Kits/**/*.kit.json, kit.json   kits (lunelle-kit/1): of patches, or sampled, a folder with its takes
+Patterns/**/*.pattern.json     patterns (lunelle-pattern/1): a beat, a line or a strum for any part to play
+Cues/**/*.cues.json            cues (lunelle-cues/1), by namespace
+```
+
+**An entry's id is its path** below its kind's folder: `Patches/bass/sub.patch.json` is the patch `bass/sub`. A file
+names nothing inside itself (an optional `"title"` is for people), and folders are the groups a library shows. One
+entry refers to another by id; `lunelle:keys/electric-piano` is the entry `keys/electric-piano` in the library the
+manifest calls `lunelle`. A **`.lunelle` file** is the same project zipped (`ProjectPacker`), with the library sounds it
+uses bundled beside it, so it stands alone; a player reads one as it is (`MusicFolder.FromPackage`).
 
 ```json
 {
-  "format": "lunelle-patch/1",
-  "name": "electric-piano",
+  "format": "lunelle/2",
+  "name": "tunes",
+  "libraries": { "lunelle": { "version": "1" } },
+  "macros": { "bright": { "number": 0, "about": "Opens the filter" } }
+}
+```
+
+**Lunelle's own sounds** are a library every host provides as `lunelle` (`BuiltInLibrary`): 47 patches in folders by
+kind, four kits of patches and two sampled kits. A released sound never changes within a major version.
+
+### Patches, and changing one without copying it
+
+**`lunelle-patch/2`** (`PatchFile`): a `PatchSpec` as JSON. Each operator is named and routed by name, and only what
+differs from a new spec's defaults is written, so `Write` then `Read` gives back the same spec, float for float.
+
+```json
+{
+  "format": "lunelle-patch/2",
   "about": "An electric piano: a tine's bell over a tone bar that barks when struck hard",
   "operators": [
     { "name": "strike", "kind": "sine", "ratio": 14, "envelope": "decay 0.06", "velocity": 0.8, "keyLevel": -4 },
@@ -690,87 +722,107 @@ from a new spec's defaults is written, so `Write` then `Read` gives back the sam
 
 A kind is `sine`, `saw`, `pulse`, `noise`, `level`, `string`, `tube` or `modes`; a sampled operator can't be data. An
 envelope is `"gate"`, `"decay s"` or `"adsr a d s r"`; a mode `"at ratio seconds [level]"` or `"fixed hz seconds
-[level]"`; a macro its number. `PatchSpec.About` carries `"about"`.
+[level]"`; a macro its number.
 
-**`lunelle-song/2`** (`SongFile`): a song, its patches, kits, cues and macros named, written a part to a line:
-`SongFile.Write(song, names)` from a built song (`SongNames` says what the catalog calls each patch, kit and macro, and
-gives a group's effects, which a built song can't), `ToJson` to add what a built song can't say before writing (its
-hooks), and `Load(json, bindings)` to build one at run time (`SongBindings` binds the names). A `loom-song/1` file,
-whose song-wide `order` or `conduct` chose the next section, is refused, saying how to move it to each section's exits.
-Its pieces:
+**A derived patch or kit** has a `"base"` and says only what it changes, by paths that name an operator or a piece by
+its name, never by its place (spec/overrides.md):
+
+```json
+{ "format": "lunelle-patch/2", "base": "lunelle:leads/saw-lead",
+  "set": { "filter.cutoff": 1800, "operators[saw2].detune": 9 }, "remove": ["operators[sub]"] }
+```
+
+It follows its base wherever it doesn't change it. A song can change a sound for itself alone (its `"patches"` and
+`"kits"`). A change whose target has gone from the base is a warning, kept in the file. `OverrideDiff` writes an
+edited derived entry back as what it changes.
+
+### Songs
+
+**`lunelle-song/3`** (`SongFile`): a song, written a part to a line. `SongFile.Load(json, bindings)` builds one from
+resolved JSON; a project resolves a song first (its patterns written in, its sounds found, its id as its name).
 
 | Key | What it says |
 |---|---|
+| `cues` | The cues it imports, each with the value the studio previews it at: `{ "intensity": 0.6, "lava/phase": "Countdown", "game:mood": null }`. A cue it reads must be imported |
 | `tempo`, `meter`, `scale`, `voices` | The song's settings, defaults left out: `"scale": "F# minor"` |
 | `effects` | The space, echo and master sends' effects, if not the defaults |
 | `groups` | `{ "name", "effects": [{ "fx": "compressor", "thresholdDb": -18, "ratio": 3 }] }`: an effect is one of `Fx`'s factories, its arguments by their parameter names |
-| `variations` | `[{ "name": "fill", "options": 3, "pick": "shuffle" }]`: the song's own picks between options, `"pick"` `"random"` (the default, with `"weights"`, one an option, if wanted), `"cycle"` or `"shuffle"`; chosen in conditions as `"fill is 2"`, never followed by a level or a macro, and never a cue's name |
+| `variations` | `[{ "name": "fill", "options": 3, "pick": "shuffle" }]`: the song's own picks between options, chosen in conditions as `"fill is 2"` |
+| `patches`, `kits` | The song's own sounds: an entry's override for this song, or a new one with a `"base"` |
 | `tracks` | `{ "name", "patch" or "kit", "group", "octave", "level", "pan", "humanise": { "ms", "velocity" }, "swing": { "ratio", "step" }, "macros": [{ "macro", "follow", "from", "to" } or { "macro", "set" }] }` |
-| `sections` | `{ "name", "about", "bars", "chords", "parts": [...], "sweeps": [{ "track", "macro", "from", "to" }], "exits": [{ "when": "intensity > 0.7", "then": "open" }, { "then": "cruise" }] }`: the exits tried in order as it ends, the last, with no `when`, always |
-| a part | `{ "track", "name", ` a line `"line": "eighths", "notes", "overChords", "octave"`, a beat `"beat", "rows": { "kick": "x..." }`, a strum `"strum", "notes", "voicing", "spread"`, or code `"part": { "code": "Name" }`; then `"when"`, `"level"` (a cue), `"onPhrase"`, `"endWith"` (a part) `}`, or a whole placement as code `{ "track", "code": "Name" }` |
-| `hooks` | `["OnBuilt"]`: code of the game's own, run with the song and every section once the rest is built |
+| `sections` | `{ "name", "about", "bars", "chords", "parts": [...], "sweeps": [...], "exits": [{ "when": "intensity > 0.7", "then": "open" }, { "then": "cruise" }] }` |
+| a part | `{ "track", "name", ` a line `"line": "eighths", "notes", "overChords", "octave"`, a beat `"beat", "rows": { "kick": "x..." }`, a strum `"strum", "notes", "voicing", "spread"`, a `"pattern"` (with its transforms), a `"sequence"` of those, or code `"part": { "code": "Name" }`; then `"velocity"`, `"when"`, `"level"`, `"onPhrase"`, `"endWith"` `}`, or a whole placement as code `{ "track", "code": "Name" }` |
+| `hooks` | `["OnBuilt"]`: code of the game's own, run with the song once the rest is built |
+| `exports` | Scripted runs of the song to render, the same every time (below) |
 
-A condition (`ConditionText`) is `"intensity > 0.6"`, `"intensity < 0.2"`, `"biome is Forest"` or the section's pass,
+A condition (`ConditionText`) is `"intensity > 0.6"`, `"lava/heat < 0.2"`, `"biome is Forest"` or the section's pass,
 `"pass < 2"`, joined by `and`, `or`, `not` and brackets.
 
-**The generator** (`BinaryVibrance.Lunelle.Music.Generator`) reads a project's `AdditionalFiles` ending `.patch.json` and
-`.song.json`. Every patch file becomes a property of one `static partial class Patches` in the project's root namespace,
-named for its file (`electric-piano.patch.json` is `Patches.ElectricPiano`), written as `PatchCode` writes it. Every song
-file becomes `static partial class OpenRoad` (from `open-road.song.json`) with `public static Song Build()`, in the
-namespace of its folder. A name in a song is a member of the project's classes: `Patches.UprightBass`, `Kits.General`,
-`Cues.Intensity`, `Macros.Bright`; a choice cue's enum and an effect's argument types come from the compilation. What a
-file says that can't be code is an error, `LUNELLEMUSIC001`, at its line in the file.
+### Cues
 
-What a file can't say is code, declared by the generated class and written in the game's own half of it, so a missing or
-renamed member fails the build: a part (`private static partial Part Name();`), a placement (`private static partial
-Placement Name(Section section, SongTrack track);`), a patch (`public static partial Patch Name { get; }`), a hook
-(`static partial void OnBuilt(Song song, Section verse, Section chorus);`).
+Cues are entries of the project's cue files, by namespace (spec/cues.md):
 
-```xml
-<ItemGroup>
-  <AdditionalFiles Include="Patches\*.patch.json;Songs\*.song.json" />
-  <CompilerVisibleProperty Include="RootNamespace" />
-  <CompilerVisibleProperty Include="ProjectDir" />
-  <ProjectReference Include="..\Lunelle\BinaryVibrance.Lunelle.Music.Generator\BinaryVibrance.Lunelle.Music.Generator.csproj"
-                    OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
-</ItemGroup>
+```json
+{ "format": "lunelle-cues/1", "namespace": "lava",
+  "cues": [{ "name": "heat", "about": "0 at the countdown, 1 once the floor is lava" },
+           { "name": "phase", "options": ["Countdown", "Race", "Finish"] }] }
 ```
 
-The classes the names are found in can be others (`LunelleMusicPatches`, `LunelleMusicKits`, `LunelleMusicCues`,
-`LunelleMusicMacros`, each made visible the same way). `MusicGeneratorTests` checks that the generated patch and song build
-what `PatchFile.Load` and `SongFile.Load` build from the same files; RubberTrack moved its 48 patches and ten songs onto
-the files and every render stayed bit-identical.
+A cue's id is `lava/heat`. A choice's option `i` is the value `i`, and files always name options, so reordering them
+changes no file. In a project with code the generator writes `Cues.Lava.Heat`, and an enum per choice
+(`Cues.Lava.PhaseOption`), or binds a game's own enum (`"enum": "MyGame.Biome"`).
+
+### Patterns
+
+A pattern is a part's music without its track (spec/patterns.md): a beat keyed by kit pieces, a line of degrees, a
+strum, or a `"sequence"` of patterns. A part plays one with `"pattern": "drums/groove"` and plays exactly as the same
+content written in; `velocity`, `pieces`, `octave`, `overChords`, `voicing` and `spread` change how it plays. A beat
+naming a piece the kit hasn't is a warning; a kind or meter that doesn't fit is an error. `Part.Sequence` and
+`Part.Velocity` are the code a pattern writes in.
+
+### Exports
+
+A song's `"exports"` are scripted runs of it: where it starts, its cues, events that set or ramp a cue or hold a
+track's macro (`MusicPlayer.HoldMacro`) or jump, at a bar (`"17:1"`) or a section's start or end
+(`"section lift#2"`), and how it ends. `SongExport.Render` plays one offline, each event at its exact frame, and writes
+a WAV with its loop points (`smpl`) and tags; the same export renders the same bytes on one build, at one rate, on one
+kind of processor. `SongExport.RenderAlbum` renders the manifest's `"album"` (spec/exports.md).
 
 ### A project of files alone: `MusicFolder`
 
-A project needn't have code at all. `MusicFolder.Load(paths, read)` (or `FromDirectory`) takes every file it is given,
-each read through `read` by its path, so a folder, a zip or a browser's storage load alike:
+`MusicFolder.Load(source)` takes an `IProjectSource`: a folder (`DirectorySource`, or `FromDirectory`), a `.lunelle`
+file (`ZipSource`, or `FromPackage`) or files given by path (`MemorySource`, or `Load(paths, read)`), so a browser's
+storage loads alike. Its songs, patches and kits are the project's own by id; `Resolved(song)` and `CuesOf(song)` say
+what each song resolved to and imports, and `BuildSong(id, text)` builds a song from an editor's text. What a song names
+as code has none: a part or a placement plays a `Rest`, a hook doesn't run, and `CodeIn(song)` lists each. A file that
+can't be read or resolved is left out and said in `Problems` (and `Diagnostics`, with where in the file), and the rest
+load.
 
-| File | Is |
-|---|---|
-| `*.song.json` | A song, named by its `"name"`, built by `SongFile.Load` each time it is asked for |
-| `*.patch.json` | A patch, named by its file (`electric-piano.patch.json` is "electric-piano"), as the generator names it |
-| `kit.json`, `*.kit.json` | A kit, sampled or of patches (section 2), named by its `"name"`, loaded once on first asking |
-| `lunelle-project.json` | At the root: what a project with code declares in C#, its cues and macros |
+### In a project with code: the generator
 
-```json
-{
-  "format": "lunelle-project/1",
-  "name": "HelloSynth",
-  "cues": [
-    { "name": "intensity", "initial": 0.3 },
-    { "name": "mood", "options": ["Calm", "Bright", "Dark"], "initial": "Calm" }
-  ],
-  "macros": { "bright": 0 }
-}
+The generator (`BinaryVibrance.Lunelle.Music.Generator`) resolves the project from its additional files as `MusicFolder`
+does, then writes: every patch the project has or plays as a property of `Patches`, nested by id
+(`Patches.Bass.Sub`, `Patches.Lunelle.Keys.ElectricPiano`); every kit of patches a property of `Kits`; every cue and
+macro (`Cues`, `Macros`); and every song as `static partial class OpenRoad` with `public static Song Build()`, in the
+namespace of its folder, with its own sounds as its private members. A sampled kit, or any sound the game writes in C#,
+is found among the game's own members. What a file says that can't be code is an error, `LUNELLEMUSIC001`, at its line;
+a warning, `LUNELLEMUSIC002`.
+
+What a file can't say is code, declared by the generated class and written in the game's own half of it: a part, a
+placement, a patch, a hook. A project hands its music to the generator with Lunelle's build props, which the package
+imports (and a build from source imports itself); a library by path outside the project is named for its files to be
+read:
+
+```xml
+<Import Project="..\Lunelle\BinaryVibrance.Lunelle\build\BinaryVibrance.Lunelle.props" />
+<ItemGroup>
+  <ProjectReference Include="..\Lunelle\BinaryVibrance.Lunelle.Music.Generator\BinaryVibrance.Lunelle.Music.Generator.csproj"
+                    OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  <LunelleLibrary Include="..\GameSounds" />
+</ItemGroup>
 ```
 
-A cue with `"options"` is a `ChoiceCue`, a choice among names rather than an enum's values; option `i` is the value `i`,
-as an enum numbered from 0 is, so a song's `"mood is Dark"` plays the same against either. Its `Bindings` bind a song's
-names to the folder's own. What a song names as code has none: a part or a placement plays a `Rest` (a bar of nothing,
-on any track), a hook doesn't run, and `CodeIn(song)` lists each (`"part Riff"`, `"placement Counter"`, `"hook
-OnBuilt"`), so a song that is mostly data still plays, short of its code. A patch file that is code, or any file that
-can't be read, is left out and said in `Problems`, one line a file, and the rest load.
+`MusicGeneratorTests` checks that the generated music renders bit-identically to the same files loaded at run time.
 
 ---
 

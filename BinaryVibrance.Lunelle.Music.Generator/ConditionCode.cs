@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text;
 
+using BinaryVibrance.Lunelle.Music.Generator.Format;
+
 namespace BinaryVibrance.Lunelle.Music.Generator;
 
 /// <summary>
@@ -25,11 +27,11 @@ internal sealed class ConditionCode(MusicContext context)
 	private sealed record Or(Node A, Node B) : Node;
 
 	/// <summary>The condition as a placement's or an exit's <c>Condition</c>.</summary>
-	/// <exception cref="JsonError">It isn't a condition, or names a cue the project doesn't have.</exception>
-	public string Placement(Json text) => Write(Parse(text), 0, text);
+	/// <exception cref="FormatError">It isn't a condition, or names a cue the project doesn't have.</exception>
+	public string Placement(JNode text) => Write(Parse(text), 0, text);
 
 	// Precedence: 0 or, 1 and, 2 not and comparisons, as ConditionText reads them
-	private string Write(Node node, int context, Json where) => node switch
+	private string Write(Node node, int context, JNode where) => node switch
 	{
 		Compare c => Comparison(c, where),
 		Not n => $"!{Write(n.A, 2, where)}",
@@ -40,45 +42,47 @@ internal sealed class ConditionCode(MusicContext context)
 
 	private static string Bracket(string text, bool needed) => needed ? $"({text})" : text;
 
-	private string Comparison(Compare c, Json where)
+	private string Comparison(Compare c, JNode where)
 	{
 		if (c.Cue == "pass")
 		{
 			if (!int.TryParse(c.Value, NumberStyles.None, CultureInfo.InvariantCulture, out var count))
-				throw new JsonError($"\"{c.Value}\" isn't a whole number of passes", where.Span);
+				throw new FormatError($"\"{c.Value}\" isn't a whole number of passes", where);
 			if (count < 1)
-				throw new JsonError($"\"pass {c.Op} {c.Value}\": passes count from 1, the first time through", where.Span);
+				throw new FormatError($"\"pass {c.Op} {c.Value}\": passes count from 1, the first time through", where);
 			var kind = c.Op switch { ">" => "Above", "<" => "Below", _ => "Is" };
 			return $"global::BinaryVibrance.Lunelle.Music.Pass.{kind}({count})";
 		}
 		if (Variations.TryGetValue(c.Cue, out var variation))
 		{
 			if (c.Op != "is")
-				throw new JsonError($"\"{c.Cue}\" is a variation, so it is \"is\" one of its options (\"{c.Cue} is 2\"), not {c.Op} one", where.Span);
+				throw new FormatError($"\"{c.Cue}\" is a variation, so it is \"is\" one of its options (\"{c.Cue} is 2\"), not {c.Op} one", where);
 			if (!int.TryParse(c.Value, NumberStyles.None, CultureInfo.InvariantCulture, out var option) || option < 1 || option > variation.Options)
-				throw new JsonError($"\"{c.Cue}\" has options 1 to {variation.Options}, not \"{c.Value}\"", where.Span);
+				throw new FormatError($"\"{c.Cue}\" has options 1 to {variation.Options}, not \"{c.Value}\"", where);
 			return $"{variation.Var}.Is({option})";
 		}
 		if (!context.HasCue(c.Cue))
-			throw new JsonError($"no cue is named \"{c.Cue}\" in {context.Options.Cues}", where.Span);
+			throw new FormatError(context.FindsCue(c.Cue)
+				? $"the song reads the cue '{c.Cue}', which it doesn't import: add it to its \"cues\""
+				: $"no cue is '{c.Cue}'", where);
 		var cue = context.Cue(c.Cue);
 		if (c.Op == "is")
 		{
-			var choice = context.CueEnum(c.Cue) ?? throw new JsonError($"\"{c.Cue}\" isn't a choice, so it can't be \"is {c.Value}\"", where.Span);
+			var choice = context.CueEnum(c.Cue) ?? throw new FormatError($"\"{c.Cue}\" isn't a choice, so it can't be \"is {c.Value}\"", where);
 			var value = $"{choice}.{Code.Identifier(c.Value)}";
 			return $"{cue}.Is({value})";
 		}
 		if (!float.TryParse(c.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
-			throw new JsonError($"\"{c.Value}\" isn't a number", where.Span);
+			throw new FormatError($"\"{c.Value}\" isn't a number", where);
 		return $"{cue}.{(c.Op == ">" ? "Above" : "Below")}({Code.F(c.Value)})";
 	}
 
-	private static Node Parse(Json text)
+	private static Node Parse(JNode text)
 	{
-		var source = text.Str ?? throw new JsonError("a condition is text (\"intensity > 0.5\")", text.Span);
+		var source = text.Str ?? throw new FormatError("a condition is text (\"intensity > 0.5\")", text);
 		var tokens = Tokens(source);
 		var at = 0;
-		JsonError Error(string why) => new($"\"{source}\" isn't a condition: {why}", text.Span);
+		FormatError Error(string why) => new($"\"{source}\" isn't a condition: {why}", text);
 		string? Peek() => at < tokens.Count ? tokens[at] : null;
 		string Next() => at < tokens.Count ? tokens[at++] : throw Error("it ends too soon");
 		Node OrNode()
