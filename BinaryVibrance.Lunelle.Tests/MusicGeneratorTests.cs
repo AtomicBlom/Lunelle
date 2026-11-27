@@ -142,14 +142,18 @@ public class MusicGeneratorTests
 		Path.GetFullPath(Path.Combine(Path.GetDirectoryName(here)!, "..", "BinaryVibrance.Lunelle", "Library"));
 
 	// The project compiled with the generator over its files (the manifest and cues as above unless given): what it made, and every diagnostic
-	private static (Compilation Output, ImmutableArray<Diagnostic> Diagnostics, GeneratorDriverRunResult Run) Generate(params (string Path, string Text)[] files)
+	private static (Compilation Output, ImmutableArray<Diagnostic> Diagnostics, GeneratorDriverRunResult Run) Generate(params (string Path, string Text)[] files) =>
+		GenerateOver(Source, files);
+
+	// The same, over the game's own C# given
+	private static (Compilation Output, ImmutableArray<Diagnostic> Diagnostics, GeneratorDriverRunResult Run) GenerateOver(string source, params (string Path, string Text)[] files)
 	{
 		var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
 			.Select(path => MetadataReference.CreateFromFile(path))
 			.Append(MetadataReference.CreateFromFile(typeof(Patch).Assembly.Location))
 			.Append(MetadataReference.CreateFromFile(typeof(AudioEffect).Assembly.Location));
 		var parse = new CSharpParseOptions(LanguageVersion.Preview);
-		var compilation = CSharpCompilation.Create("Tunes", [CSharpSyntaxTree.ParseText(Source, parse)], references,
+		var compilation = CSharpCompilation.Create("Tunes", [CSharpSyntaxTree.ParseText(source, parse)], references,
 			new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
 		var project = Path.Combine(Path.GetTempPath(), "tunes");
 		var all = files.ToList();
@@ -264,6 +268,43 @@ public class MusicGeneratorTests
 		a.Step(MusicRig.Bar * 2);
 		b.Step(MusicRig.Bar * 2);
 		a.Left().ShouldBe(b.Left());
+	}
+
+	[Test]
+	public void A_library_s_sampled_kit_is_the_game_s_to_load_in_the_class_its_id_nests_in()
+	{
+		// lunelle:rock is sampled, so the game loads it in C# where the generator would have put it: Kits.Lunelle.Rock
+		const string game = """
+			using BinaryVibrance.Lunelle.Chip;
+
+			namespace Tunes
+			{
+				public enum Mood { Calm, Dark }
+
+				static partial class Kits
+				{
+					public static partial class Lunelle
+					{
+						public static DrumKit Rock => DrumKit.FromPatches("rock");
+					}
+				}
+			}
+			""";
+		const string beat = """
+			{
+			  "format": "lunelle-song/3",
+			  "tracks": [{ "name": "drums", "kit": "lunelle:rock" }],
+			  "sections": [{ "name": "groove", "bars": 1, "parts": [{ "track": "drums", "beat": "eighths", "rows": { "kick": "x... x..." } }] }]
+			}
+			""";
+		var (output, diagnostics, run) = GenerateOver(game, ("Songs/drum-loop.song.json", beat));
+		diagnostics.ShouldBeEmpty();
+		Generated(run, "Tunes.Songs.DrumLoop.g.cs").ShouldContain("Kits.Lunelle.Rock");
+		output.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ShouldBeEmpty();
+
+		// With nothing there to load it, the song says where it goes
+		GenerateOver(game.Replace("Rock", "Elsewhere", StringComparison.Ordinal), ("Songs/drum-loop.song.json", beat)).Diagnostics
+			.ShouldContain(d => d.GetMessage().Contains("Kits.Lunelle.Rock"));
 	}
 
 	[Test]
