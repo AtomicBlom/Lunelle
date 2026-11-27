@@ -132,8 +132,21 @@ internal sealed class MusicContext(Compilation compilation, MusicOptions options
 		throw new FormatError($"{value} isn't an argument this can write", value);
 	}
 
-	/// <summary>Whether the game declares <paramref name="member"/> in its own C# class <paramref name="type"/> (a sound of its own).</summary>
-	public bool HasMember(string type, string member) =>
-		compilation.GetSymbolsWithName(type, SymbolFilter.Type).OfType<INamedTypeSymbol>()
-			.Any(t => t.GetMembers(member).Any(m => m.IsStatic && !m.IsImplicitlyDeclared && m.DeclaringSyntaxReferences.Length > 0));
+	/// <summary>
+	/// Whether the game declares <paramref name="member"/> in its own C# class <paramref name="type"/> (a sound of its own),
+	/// a dotted path reaching into its nested classes as the generator nests them: <c>Lunelle.General</c> for a library's
+	/// sampled kit is <c>Kits.Lunelle.General</c>.
+	/// </summary>
+	public bool HasMember(string type, string member)
+	{
+		var path = member.Split('.');
+		IEnumerable<INamedTypeSymbol> types = compilation.GetSymbolsWithName(type, SymbolFilter.Type).OfType<INamedTypeSymbol>();
+		for (var i = 0; i < path.Length - 1; i++)
+		{
+			var nested = path[i];
+			types = types.SelectMany(t => t.GetTypeMembers(nested));
+		}
+		var name = path[path.Length - 1];
+		return types.Any(t => t.GetMembers(name).Any(m => m.IsStatic && !m.IsImplicitlyDeclared && m.DeclaringSyntaxReferences.Length > 0));
+	}
 }
